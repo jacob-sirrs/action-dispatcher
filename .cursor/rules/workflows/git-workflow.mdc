@@ -1,0 +1,71 @@
+---
+description: USE WHEN creating branches, writing commit messages, or preparing pull requests.
+globs:
+alwaysApply: false
+---
+
+# Git Workflow
+
+## CRITICAL: Never Rewrite Already-Pushed History
+
+This project is connected to Lovable (see `AGENTS.md`). **Never**
+force-push, rebase, amend, or squash a commit that has already been
+pushed — it rewrites history on Lovable's side and can lose project
+history. Prefer a new commit over amending, always.
+
+## CRITICAL: Never Commit Directly to Main
+
+**Before ANY commit or push, you MUST:**
+
+1. Check the current branch.
+2. If on `main`, create a new branch first: `git checkout -b prefix/description`.
+3. Make changes and commit to the feature branch, in small, reviewable
+   increments.
+4. **Stop and get explicit user approval before staging, committing, or
+   pushing anything** — every time, not just for the first change on a
+   branch.
+
+Never run `git push origin main`.
+
+## Branch Naming
+
+| Prefix | Use Case | Example |
+|--------|----------|---------|
+| `feature/` | New feature | `feature/transcript-file-upload` |
+| `fix/` | Bug fix | `fix/upload-race-condition` |
+| `chore/` | Maintenance, deps, config | `chore/add-vitest` |
+| `docs/` | Documentation only | `docs/update-implementation-log` |
+| `refactor/` | Code restructure (no behavior change) | `refactor/extract-vtt-parser` |
+| `test/` | Adding or fixing tests | `test/transcript-file-parsing` |
+
+**Format:** `prefix/short-description` (lowercase, hyphens, no spaces).
+
+## Conventional Commits
+
+```
+type(scope): short description
+
+[optional body]
+```
+
+Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, `ci`,
+`perf`, `revert`.
+
+```bash
+feat(transcript): add .txt/.vtt file upload
+fix(transcript): reject files over 5 MB before reading
+docs(log): record Capability F increment in implementation log
+```
+
+## Pull Request Guidelines
+
+1. **Title:** conventional-commit format (`feat(scope): description`).
+2. **Description:** what changed, why, and which acceptance criteria it
+   satisfies — use `.github/PULL_REQUEST_TEMPLATE.md`.
+3. **Size:** keep PRs small and focused on one increment.
+4. **Before opening:** `docs/IMPLEMENTATION_LOG.md` reflects this
+   increment accurately (see `CLAUDE.md`).
+
+## Protected Branches
+
+- `main` — requires a PR; never force-pushed; never rewritten.

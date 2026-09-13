@@ -1,0 +1,51 @@
+---
+description: USE WHEN implementing error handling, adding try/catch blocks, or building user-facing error messages.
+globs:
+alwaysApply: false
+---
+
+# Error Handling Patterns
+
+This project has no server API routes for client-side features like
+transcript file upload — parsing and validation happen entirely in the
+browser. These patterns apply there and to any server function
+(`createServerFn`) that talks to Zapier.
+
+## General Rules
+
+- Wrap operations that can fail (file reads, parsing, external calls) in
+  try/catch.
+- Never use `catch (e: any)` — use `catch (error: unknown)` and narrow
+  the type before using it.
+- Never catch an error and silently swallow it — at minimum, surface a
+  user-safe message; for genuinely unexpected errors, keep visible state
+  (don't let the UI hang or falsely report success).
+- Show the operator a sanitized message — never a raw exception, stack
+  trace, file path, or dependency version.
+- Differentiate expected/operational failures (unsupported file type,
+  oversized file, malformed `.vtt`) from unexpected ones — operational
+  failures get a specific, clear message; unexpected ones get a generic
+  "something went wrong" message, never a stack trace either way.
+
+## Pattern: typed errors for expected failure cases
+
+```typescript
+export class UnsupportedFileTypeError extends Error {}
+export class FileTooLargeError extends Error {}
+export class EmptyTranscriptError extends Error {}
+export class MalformedVttError extends Error {}
+export class UnreadableFileError extends Error {}
+```
+
+Map each typed error to one user-safe message at the UI layer — don't
+string-match error text to decide what to show.
+
+## What NOT to Do
+
+- Never expose a parser exception or raw stack trace in the UI.
+- Never leave existing state (e.g. the transcript editor's content)
+  partially modified when an operation fails or is cancelled — either it
+  fully applies, or the prior state is left exactly as it was.
+- Never log the content of what failed to parse (e.g. the file's text) —
+  logging the error type/name is fine, logging the transcript content is
+  not.
