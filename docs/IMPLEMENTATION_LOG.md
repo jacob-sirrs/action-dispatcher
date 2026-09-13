@@ -7,10 +7,15 @@ planned work is never described as implemented.
 **Companion to:** `ACTION_DISPATCH_PRD.md`, `ACTION_DISPATCH_PHASE_PLAN.md`,
 `ACTION_DISPATCH_ACCEPTANCE_CRITERIA.md` (all in `FDO-action-dispatch/`).
 
-**As of this version: Capability F, Increment 1 (transcript file
-validation and parsing) is In Progress** — a pure, unit-tested parsing
-module exists. **The upload UI has not been built and no capability is
-fully implemented yet.**
+**As of this version: Capability F, Increment 2 (transcript-upload UI and
+integration) is Implemented — core upload/overwrite/cancel flow has been
+manually verified live**, by you, against a real, SDK-connected session,
+using the actual macOS file picker. Error-rejection paths (unsupported
+extension, oversized, empty, malformed `.vtt`), inline VTT speaker-label
+preservation, the rapid-reselection race behavior, and the DevTools
+network/console checks remain manually unverified — see the Increment 2
+entry below for exactly what's confirmed vs. still open.
+**No capability has reached "Tested" or "Stakeholder Approved" yet.**
 
 ---
 
@@ -26,6 +31,7 @@ Nothing qualifies yet — see Implementation Summary below._
 | Capability | Status | Date | Branch | PR | Stakeholder Approval |
 |---|---|---|---|---|---|
 | F — Transcript file upload (Increment 1: validation & parsing) | In Progress | 2026-09-13 | `feature/transcript-file-upload` | — | Not yet requested |
+| F — Transcript file upload (Increment 2: upload UI & integration) | Implemented — core flow manually verified, some scenarios still unverified | 2026-09-13 | `feature/transcript-file-upload` | — | Not yet requested |
 
 _No row in this table may say "Implemented," "Tested," or "Stakeholder
 Approved" until the corresponding Detailed Implementation Entry below
@@ -121,8 +127,10 @@ _Template for future entries — copy this structure exactly:_
   - `package.json` (added `vitest` devDependency and a `test` script)
   - `bun.lock` (updated for the new dependency)
 - **Branch name:** `feature/transcript-file-upload`
-- **Commit hashes:** None yet — nothing in this increment has been
-  staged or committed.
+- **Commit hashes:** `9b77197ee5e210232742f5faa0f2903780f935a8` — *(corrected
+  retroactively: this entry originally said "None yet" at the time it was
+  drafted, before the commit landed; not updated again after committing
+  until this correction.)*
 - **Pull-request URL:** None yet.
 - **Known limitations:**
   - VTT parsing enforces at most one identifier line before the timing
@@ -141,6 +149,157 @@ _Template for future entries — copy this structure exactly:_
   increment, per the approved scope for Increment 1.
 - **Stakeholder approval status:** Not yet requested — awaiting your
   review of this increment first.
+
+---
+
+### F — Transcript file upload (Increment 2: upload UI & integration)
+
+- **Date:** 2026-09-13
+- **Status:** Implemented. Automated tests pass, lint is clean, the build
+  succeeds, and the core upload/overwrite/cancel flow has now been
+  manually verified live by you against a real, SDK-connected session.
+  Several specific scenarios (error-rejection paths, VTT speaker-label
+  preservation, the rapid-reselection race, DevTools network/console
+  checks) remain manually unverified — see "Manual tests and results."
+- **User problem:** The operator has to manually copy/paste transcript
+  text into the editor even when they already have a `.txt` or `.vtt`
+  file in hand.
+- **Why the change was selected:** Second and final slice of Capability F
+  (PH1-F) — wires the Increment 1 parsing module into the transcript
+  editor so the operator can actually use it.
+- **What existed before:** Increment 1's tested `extractTranscriptText`
+  module existed but was not imported or referenced anywhere in the app.
+  The transcript editor only accepted pasted text or "Load sample
+  transcript."
+- **What was actually changed:** Added a small, independently testable
+  `TranscriptUpload` component (`src/components/TranscriptUpload.tsx`)
+  and wired it into `src/routes/index.tsx`'s `Connected` component, next
+  to the existing "Load sample transcript" button. The component: shows a
+  hidden native file input behind an accessible button; calls
+  `extractTranscriptText`; loads text immediately into the editor via the
+  existing `onTranscriptChange` when the editor is empty; shows the
+  existing `AlertDialog` component as an overwrite-confirmation step when
+  the editor has content; shows a static, user-safe error message on any
+  rejection; guards against races with a selection-token ref so only the
+  most recently selected file's outcome can ever apply; and resets the
+  file input's value after every selection so the same file can be
+  re-selected.
+- **What the user can now do:** Select a `.txt` or `.vtt` file next to
+  the transcript editor and have its text (or extracted `.vtt` cue text)
+  load into the editor, with an overwrite warning if the editor already
+  has content, and a clear error if the file is rejected. Nothing is sent
+  anywhere, and analysis is never triggered automatically.
+- **Acceptance criteria verified (PH1-F, automated):**
+  - Valid file loads into an empty editor immediately.
+  - Overwrite confirmation appears when the editor has content, and is
+    skipped when it's empty.
+  - Cancelling the confirmation preserves existing content.
+  - Confirming the overwrite replaces the content.
+  - Any rejection (unsupported/oversized/empty/malformed/unreadable)
+    shows a clear, user-safe error and leaves existing content untouched.
+  - Rapid selection of a second file resolves to only the most recent
+    file's outcome.
+  - The same file can be selected twice in a row and is handled both
+    times.
+  - A successful load never triggers analysis itself.
+  - **Not yet verified (require a live browser + connected Zapier
+    session — see checklist below):** real keyboard/screen-reader
+    operability of the button; real `.txt`/`.vtt` files through actual
+    OS file-picker dialogs; visual correctness of the error text and
+    confirmation dialog; that manual paste and "Load sample transcript"
+    are visually and functionally unaffected in the running app; that no
+    network request fires in a real browser session (only inferred from
+    the code, not observed in DevTools).
+- **Automated tests and results:** 21/21 passing (`bun run test`,
+  Vitest) — 13 from Increment 1 (unchanged) plus 8 new component tests
+  covering: load-into-empty-editor, overwrite-confirmation-shown,
+  cancel-preserves-content, confirm-replaces-content, user-safe-error-
+  displayed-and-preserves-content, latest-file-wins under a simulated
+  race (mocked, controlled promise resolution order), input-reset-allows-
+  reselecting-the-same-file, and no-automatic-analysis. The component
+  tests mock `extractTranscriptText` rather than re-testing parsing logic
+  (already covered by Increment 1), keeping the two test suites
+  independent. Test fixtures use placeholder strings only (e.g.
+  `"irrelevant"`, `"Extracted transcript text."`) — no real or private
+  transcript content.
+- **Manual tests and results:** An initial attempt found a pre-existing,
+  unrelated `vite dev` process already running on port 3333 (elapsed ~2
+  days, predating this session) whose stale HMR module graph returned the
+  app's generic error page. The launch configuration was fixed (it had
+  been starting the dev server from the wrong working directory) and a
+  fresh server was started successfully — the app loaded past the
+  SDK-connection screen straight into a real, connected session
+  (`jacob@simplifyelevation.com`, 13 apps).
+
+  **Verified live by you, using the actual macOS native file picker (not
+  simulated), against that connected session:**
+  - The "↑ Upload transcript file" button opens the real macOS file
+    picker.
+  - A selected `.txt` file's contents load correctly into the editor and
+    remain fully editable afterward.
+  - The same file can be selected a second time and is handled again
+    (confirms the input-reset behavior).
+  - The overwrite-confirmation dialog appears when replacing existing
+    editor content.
+  - Clicking **Replace** correctly replaces the editor's content with the
+    newly uploaded file's text.
+  - Clicking **Cancel** correctly preserves the existing editor content
+    unchanged.
+  - Loading a file does **not** automatically trigger transcript
+    analysis.
+  - This verification pass was deliberately side-effect-free: you did not
+    click "Analyze Transcript" or execute any Zapier action at any point.
+
+  **Not yet manually verified** (still open):
+  1. Rejection behavior for an unsupported file extension.
+  2. Rejection of a file over 5 MB.
+  3. Rejection of an empty (zero-byte / no-text-found) file.
+  4. Rejection of a malformed `.vtt` file (missing header / broken
+     timing), with no partial extraction.
+  5. Inline VTT speaker-label preservation in a real `.vtt` file (e.g. a
+     line like `NAME: ...` surviving extraction unchanged).
+  6. The latest-file-wins race behavior under rapid re-selection of two
+     different files.
+  7. Explicit keyboard-only operation (Tab to the button, activate with
+     Enter/Space) — this pass used a mouse click.
+  8. DevTools Network tab confirmation that zero requests fire from any
+     file selection.
+  9. DevTools Console confirmation that no transcript content is ever
+     printed, in success or failure cases.
+- **Exact files changed:**
+  - `src/components/TranscriptUpload.tsx` (new)
+  - `src/components/TranscriptUpload.test.tsx` (new)
+  - `src/routes/index.tsx` (modified — import + one control added next to
+    "Load sample transcript")
+  - `vitest.config.ts` (modified — `environment: "jsdom"`,
+    `resolve.tsconfigPaths: true`, broadened test glob to include `.tsx`)
+  - `package.json` (added `@testing-library/react` and `jsdom`
+    devDependencies)
+  - `bun.lock` (updated for the two new dependencies)
+- **Branch name:** `feature/transcript-file-upload`
+- **Commit hashes:** None yet — nothing in this increment has been
+  staged or committed.
+- **Pull-request URL:** None yet.
+- **Known limitations:**
+  - The core happy-path/overwrite/cancel flow is manually verified live;
+    error-rejection paths, VTT speaker-label preservation, the
+    rapid-reselection race, keyboard-only operation, and DevTools
+    network/console checks are not yet manually verified (see above).
+  - The overwrite-confirmation dialog's copy is a first draft ("Replace
+    existing transcript? ... This can't be undone.") — not reviewed for
+    tone/wording.
+  - Error messages are generic per error type (e.g. one fixed sentence
+    for any oversized file) — they don't include the file name or size,
+    by design, to avoid any risk of echoing file content, but this also
+    means two different oversized files produce identical-looking errors.
+- **Deliberately excluded scope:** Persistence, network calls, server
+  endpoints, databases, meeting-platform imports, audio/video support,
+  and D2's execution guard — none touched. No changes to
+  `src/routes/__root.tsx` or `src/styles.css` (the stashed, unrelated
+  font change remains untouched and unstaged).
+- **Stakeholder approval status:** Not yet requested — awaiting your
+  review, including the manual checklist above, before this can move
+  past "Implemented."
 
 ---
 
