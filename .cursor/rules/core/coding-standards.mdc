@@ -1,0 +1,50 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+
+# Coding Standards
+
+## Generative Path Checks
+
+For every code generation task, follow this sequence:
+
+1. **Think:** "How could this break? What input could a user hand this
+   that I haven't accounted for?"
+2. **Plan:** "What tests will catch that break?"
+3. **Code:** Generate the solution.
+4. **Verify:** Generate at least one test case for the edge case (once
+   Vitest is installed — see `core/project-stack.mdc`).
+
+## Code Quality
+
+- Keep functions under 50 lines. Extract when complexity grows.
+- Prefer early returns over deeply nested conditionals.
+- Use `const` by default. Use `let` only when reassignment is necessary.
+- Use descriptive variable names. Avoid single-letter names except in
+  tight loops.
+- Don't add abstractions, config flags, or generalized helpers for a
+  single call site — three similar lines beat a premature abstraction.
+
+## Interpretative Framing (Action Dispatch specifics)
+
+When a request is underspecified, apply these project-correct defaults —
+**not** generic web-app defaults:
+
+- "file upload" → client-side only: validate extension and `file.size`
+  **before** reading; never assume a server endpoint, cloud storage, or a
+  database record exists to receive it (none does in this project).
+- "authentication" / "login" → there is no per-end-user login in this
+  project. The only credential is the existing Zapier SDK CLI
+  login/`ZAPIER_CREDENTIALS` model — never propose a new auth system,
+  session store, or password hashing.
+- "database" / "persist this" → there is no database. Don't add one;
+  don't propose Prisma, Postgres, or Redis. If something looks like it
+  needs persistence, flag it rather than inventing storage.
+- "log this" / "add logging" → never log transcript content, credentials,
+  tokens, or personal information. Don't introduce a new logging library
+  (Sentry, Winston, Pino) without being explicitly asked.
+- "API endpoint" → confirm one is actually needed. Much of this app's
+  logic (including transcript file handling) is intentionally
+  client-side with zero server round-trip.

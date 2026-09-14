@@ -1,0 +1,53 @@
+---
+description:
+globs:
+  - "**/*.test.{ts,tsx}"
+  - "**/*.spec.{ts,tsx}"
+  - vitest.config.*
+alwaysApply: false
+---
+
+# Testing Patterns
+
+**Status: Vitest is planned but not installed yet.** There is no test
+runner or test file in this repo today. This file describes the intended
+patterns for when tests are added — don't reference `jest`, `jest.mock`,
+or `jest-environment-jsdom` in new code or docs.
+
+## Test Structure
+
+- Use descriptive test names: `it("rejects a file over 5 MB before reading it")`, not `it("works")`.
+- Organize with `describe` blocks that mirror the module under test.
+- Follow Arrange-Act-Assert (AAA) in every test.
+- Use `beforeEach`/`afterEach` for setup and teardown; clean up any side effects.
+
+## Mapping tests to acceptance criteria
+
+- Every new test must trace to a specific, approved acceptance criterion
+  in `FDO-action-dispatch/ACTION_DISPATCH_ACCEPTANCE_CRITERIA.md` — don't
+  write speculative tests for behavior that isn't specified there.
+- Always test the happy path, at least one error/rejection case, and the
+  empty/no-data case for any new user-facing behavior.
+
+## React / component testing (once needed)
+
+- Use `@testing-library/react`. Prefer `screen.getByRole` /
+  `screen.getByLabelText` over `getByTestId`.
+- Test user-visible behavior (what the operator sees/can do), not
+  internal implementation details.
+
+## Mocking
+
+- Mock external dependencies (the Zapier SDK, AI-by-Zapier calls) at the
+  boundary. Never mock the module under test.
+- Prefer `vi.spyOn` over `vi.mock` when only one method needs overriding.
+- Reset mocks in `afterEach`: `vi.restoreAllMocks()`.
+
+## Security- and privacy-relevant tests
+
+- Test that oversized/unsupported/malformed/empty input is rejected
+  *before* any content is read, parsed, or acted on.
+- Test that a rejected or cancelled operation leaves existing state
+  (e.g. transcript editor content) unchanged.
+- Test that error messages shown to the user never contain raw
+  exceptions, stack traces, or file-path internals.

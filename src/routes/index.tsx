@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { TranscriptUpload } from "@/components/TranscriptUpload";
 import {
   analyzeTranscriptStream,
   executeActions,
@@ -610,12 +611,18 @@ function Connected({
           />
         </div>
         <div className="mt-4 flex items-center justify-between gap-4">
-          <button
-            onClick={() => onTranscriptChange(SAMPLE_TRANSCRIPT_TEXT)}
-            className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground hover:text-foreground"
-          >
-            ↺ Load sample transcript
-          </button>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => onTranscriptChange(SAMPLE_TRANSCRIPT_TEXT)}
+              className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground hover:text-foreground"
+            >
+              ↺ Load sample transcript
+            </button>
+            <TranscriptUpload
+              hasExistingContent={transcript.trim().length > 0}
+              onTranscriptLoaded={onTranscriptChange}
+            />
+          </div>
           <div className="flex items-center gap-4">
             <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
               {selectedCount === 0
