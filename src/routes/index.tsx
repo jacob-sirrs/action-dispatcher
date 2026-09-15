@@ -455,7 +455,7 @@ type AppGroup = {
   accounts: ConnectedAccount[];
 };
 
-function Connected({
+export function Connected({
   accounts,
   transcript,
   onTranscriptChange,
@@ -503,6 +503,17 @@ function Connected({
     return [...byApp.values()].sort((a, b) => a.appName.localeCompare(b.appName));
   }, [accounts]);
 
+  // Search filters by app name only, case-insensitively. `.filter` preserves
+  // appGroups' existing alphabetical order — no re-sort needed. Selection
+  // state (`selectedByApp`) lives in the parent and is untouched by this
+  // filter, so a filtered-out app stays selected.
+  const [appSearchQuery, setAppSearchQuery] = useState("");
+  const filteredAppGroups = useMemo(
+    () => appGroups.filter((g) => g.appName.toLowerCase().includes(appSearchQuery.toLowerCase())),
+    [appGroups, appSearchQuery],
+  );
+  const showNoAppMatches = appSearchQuery.trim() !== "" && filteredAppGroups.length === 0;
+
   const selectedCount = Object.keys(selectedByApp).length;
   const canAnalyze = selectedCount > 0 && transcript.trim().length >= 40;
 
@@ -524,9 +535,45 @@ function Connected({
           AI&nbsp;by&nbsp;Zapier pass, one Zapier task — so extraction stays accurate and runs
           against the account you picked.
         </p>
-        {/* Alphabetical list view — one row per app, sorted A→Z. */}
+
+        <div className="mt-3 flex items-center gap-3">
+          <label htmlFor="app-search-input" className="sr-only">
+            Search connected apps by name
+          </label>
+          <input
+            id="app-search-input"
+            type="text"
+            value={appSearchQuery}
+            onChange={(e) => setAppSearchQuery(e.target.value)}
+            placeholder="Search apps…"
+            className="w-full max-w-xs rounded-sm border border-border bg-surface px-2 py-1.5 font-mono text-[11px] text-foreground outline-none focus:border-ring"
+          />
+          {appSearchQuery !== "" && (
+            <button
+              type="button"
+              onClick={() => setAppSearchQuery("")}
+              className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground hover:text-foreground"
+            >
+              Clear search
+            </button>
+          )}
+        </div>
+        {appGroups.length > 0 && (
+          <p aria-live="polite" className="sr-only">
+            {showNoAppMatches
+              ? `No apps match "${appSearchQuery}".`
+              : `${filteredAppGroups.length} of ${appGroups.length} apps shown.`}
+          </p>
+        )}
+
+        {/* Alphabetical list view — one row per app, sorted A→Z, filtered by search. */}
         <div className="mt-3 divide-y divide-border overflow-hidden rounded-md border border-border bg-card">
-          {appGroups.map((group) => {
+          {showNoAppMatches && (
+            <div className="px-3 py-6 text-center font-mono text-[11px] text-muted-foreground">
+              No apps match &ldquo;{appSearchQuery}&rdquo;.
+            </div>
+          )}
+          {filteredAppGroups.map((group) => {
             const selected = group.appKey in selectedByApp;
             const chosenId = selectedByApp[group.appKey];
             const multi = group.accounts.length > 1;

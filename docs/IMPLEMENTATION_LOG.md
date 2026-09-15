@@ -15,7 +15,8 @@ extension, oversized, empty, malformed `.vtt`), inline VTT speaker-label
 preservation, the rapid-reselection race behavior, and the DevTools
 network/console checks remain manually unverified — see the Increment 2
 entry below for exactly what's confirmed vs. still open.
-**No capability has reached "Tested" or "Stakeholder Approved" yet.**
+**User — 19 — App Search has reached Stakeholder Approved status; no other
+capability has reached "Tested" or "Stakeholder Approved" yet.**
 
 ---
 
@@ -32,6 +33,7 @@ Nothing qualifies yet — see Implementation Summary below._
 |---|---|---|---|---|---|
 | F — Transcript file upload (Increment 1: validation & parsing) | In Progress | 2026-09-13 | `feature/transcript-file-upload` | — | Not yet requested |
 | F — Transcript file upload (Increment 2: upload UI & integration) | Implemented — core flow manually verified, some scenarios still unverified | 2026-09-13 | `feature/transcript-file-upload` | — | Not yet requested |
+| User — 19 — App Search (connected-app list search/filter) | Stakeholder Approved — automated tests pass, lint clean, build succeeds, manually verified live; no PR opened yet | 2026-09-14 | `feature/app-search` | — | Approved by Jacob — 2026-09-14 |
 
 _No row in this table may say "Implemented," "Tested," or "Stakeholder
 Approved" until the corresponding Detailed Implementation Entry below
@@ -300,6 +302,170 @@ _Template for future entries — copy this structure exactly:_
 - **Stakeholder approval status:** Not yet requested — awaiting your
   review, including the manual checklist above, before this can move
   past "Implemented."
+
+---
+
+### User — 19 — App Search (connected-app list search/filter)
+
+- **Date:** 2026-09-14
+- **Status:** Stakeholder Approved. Automated tests pass, lint is clean,
+  the production build succeeds, the feature has been manually verified
+  live against a real, SDK-connected session, and Jacob has manually
+  reviewed the feature's behavior and approved it on 2026-09-14. Not yet
+  staged, committed, or opened as a pull request.
+- **Backlog source:** This story is tracked in the user's Google Drive
+  sheet **"User Stories – Action Dispatch"** as **User — 19 — App
+  Search**: *"As a user, I want to be easily able to search for apps and
+  have them sorted so I can identify/find them efficiently."* The sheet,
+  not this repository's `USER_STORIES.md` (an older, incomplete snapshot
+  that doesn't list this story), is the working source of truth for
+  backlog approval on this item.
+- **User problem:** With many connected apps (13 in the verified session),
+  scanning the full alphabetical list to find the one relevant to a given
+  transcript is slow. Sorting already existed (`appName.localeCompare`,
+  pre-existing); nothing let the operator narrow the list.
+- **Why the change was selected:** Direct implementation of the confirmed
+  User — 19 — App Search scope: name search only, no category matching,
+  no fuzzy search, no advanced filters, no saved search/persistence, no
+  backend changes, no new dependencies — approved by the user ahead of
+  implementation.
+- **What existed before:** `Connected()` in `src/routes/index.tsx` grouped
+  connected accounts into one alphabetically sorted row per app with no
+  way to filter the list.
+- **What was actually changed:** Added inline, case-insensitive substring
+  search over app name only, directly in `Connected()` — no extraction
+  into a separate component. Specifically:
+  - `appSearchQuery` state and a `filteredAppGroups` memo that filters the
+    existing sorted `appGroups` array via `.filter()`, which preserves
+    alphabetical order without re-sorting.
+  - A labeled text input (`<label htmlFor="app-search-input"
+    className="sr-only">Search connected apps by name</label>`) rendered
+    directly above the app list.
+  - A "Clear search" button, shown only when the query is non-empty, that
+    resets the query.
+  - An explicit "No apps match "{query}"." block shown in place of the
+    list when the query is non-empty and nothing matches — gated so the
+    pre-existing empty-list rendering (no accounts connected at all, query
+    empty) is unchanged.
+  - A visually-hidden (`sr-only`) `aria-live="polite"` region announcing
+    either the no-match message or an "N of M apps shown" count, so
+    screen-reader users get feedback without a focus change.
+  - `selectedByApp` (owned by the parent `DispatchApp` component) is never
+    read from or derived off the filtered list — `selectedCount` and the
+    "N app(s) selected" / Zapier-task-count text still read from the full
+    `selectedByApp` prop — so a filtered-out app's selection is untouched
+    by search and reappears checked when the filter is cleared.
+  - `Connected` was changed from a module-private function to a named
+    export solely so it could be imported directly in a new test file;
+    no other change to its signature or behavior.
+- **What the user can now do:** Type into the new search field above the
+  app list to narrow the connected-app list to apps whose name contains
+  the typed text (case-insensitive), clear the search to instantly
+  restore the full alphabetical list, see an explicit message when a
+  search matches nothing, and keep an app checked even while a search
+  query is hiding its row.
+- **Acceptance criteria verified (automated + manual):**
+  - Case-insensitive partial matching on app name — automated + manual
+    (typed "goo" and "SLACK"/"slack" against real app names).
+  - Search input rendered directly above the connected-app list, with an
+    accessible label — automated (`getByLabelText`) + manual (visual
+    placement).
+  - Clear control appears only with a non-empty query and restores the
+    full list — automated + manual.
+  - Explicit "No apps match…" state, not a blank list — automated + manual
+    (typed a nonsense query against the live session).
+  - Alphabetical ordering preserved among filtered results — automated
+    (DOM-order assertion) + manual (Google Drive before Google Sheets
+    under a "goo" filter).
+  - A filtered-out app's selection is preserved and restored on clearing
+    the filter — automated + manual (selected Google Drive, filtered to
+    "slack" hiding it, confirmed the "1 app · ~1 Zapier task" counter
+    still reflected it, cleared the filter, confirmed Google Drive still
+    showed checked).
+  - Client-side filtering only, no network request — manual (DevTools
+    Network tab showed no new requests beyond the three initial
+    `getSdkStatus`/`getConnections`/`getConnectedAccounts` server-function
+    calls made on page load, across all search/clear/filter interactions).
+  - Search resets on full page refresh — manual (typed "slack" against the
+    live 13-app session, narrowing the list to 1 of 13; did a full page
+    reload via the browser's navigation, not client-side routing; the
+    search input returned to empty with no "Clear search" button and all
+    13 apps were shown again). Consistent with `appSearchQuery` being
+    local `useState` with no persistence layer, the same mechanism the
+    existing transcript textarea and app-selection state already rely on.
+  - Accessible label and screen-reader feedback — automated (`aria-live`
+    region content assertions) + manual (confirmed via page-text
+    extraction that the live region text updates between "1 of 13 apps
+    shown." and "13 of 13 apps shown." as the filter changes).
+- **Automated tests and results:** 11/11 new tests passing in the new
+  `src/routes/index.test.tsx`, covering: accessible search input present,
+  full list shown with an empty query, case-insensitive partial-match
+  filtering, alphabetical order preserved among filtered results, explicit
+  no-results state, clear control present only with a non-empty query and
+  restores the list, a filtered-out selection surviving a filter/clear
+  round-trip (asserted via the "N app(s) selected" text and the row's
+  `aria-pressed` attribute), the `aria-live` region's announced text, and
+  a no-regression check that an empty account list doesn't spuriously
+  trigger the no-results state. Full suite: **32/32 passing** (21
+  pre-existing + 11 new), run via `node_modules/.bin/vitest run` — `bun`
+  is not on `PATH` in this execution environment, so the installed Vitest
+  binary was invoked directly; this is an environment workaround only, no
+  project tooling, scripts, or docs were changed to use `npm`/`yarn`.
+  `node_modules/.bin/eslint .` reports 0 errors (6 pre-existing warnings
+  in unrelated `src/components/ui/*.tsx` files, unchanged by this work).
+  `node_modules/.bin/vite build` completes successfully (exit code 0, no
+  errors in the full build log).
+- **Manual tests and results:** Verified live in the browser preview
+  against a real, SDK-connected session (`jacob@simplifyelevation.com`,
+  13 connected apps) started via the existing `action-dispatch-dev` launch
+  configuration (`bun run dev` under the hood). Confirmed: the search
+  input renders directly above the app list with placeholder "Search
+  apps…"; typing "goo" filters to exactly Google Drive and Google Sheets,
+  in that order; typing "SLACK"/"slack" matches "Slack" regardless of
+  case; selecting Google Drive, then filtering to "slack" (hiding Google
+  Drive), left the "1 app · ~1 Zapier task" indicator unchanged; clearing
+  the search restored all 13 apps with Google Drive still shown checked
+  and its account label; typing a nonsense query ("zzznotanapp") rendered
+  the visible "No apps match "zzznotanapp"." block in place of the list;
+  DevTools Network tab showed no request fired by any search/clear
+  interaction; typing "slack" to narrow the list to 1 of 13 apps, then
+  doing a full page reload (not client-side navigation), returned the
+  search input to empty with the "Clear search" button gone and all 13
+  apps shown again. This pass was deliberately side-effect-free — "Analyze
+  Transcript" was never clicked and no Zapier action was executed. One
+  unrelated console warning (a React hydration-mismatch notice pointing
+  at `src/routes/__root.tsx` `data-tsd-source` attributes) was observed
+  during this session; confirmed via `git diff main -- src/routes/__root.tsx`
+  that this file has zero changes on this branch, so the warning is
+  pre-existing dev-mode noise unrelated to this feature, not a regression
+  introduced by it.
+- **Exact files changed:**
+  - `src/routes/index.tsx` (modified — search state, filtered/sorted memo,
+    search input + clear control + no-results block + `aria-live` region
+    added inline in `Connected()`; `Connected` changed from
+    module-private to a named export)
+  - `src/routes/index.test.tsx` (new)
+- **Branch name:** `feature/app-search`
+- **Commit hashes:** None yet — nothing staged or committed.
+- **Pull-request URL:** None yet.
+- **Known limitations:**
+  - `bun` is not installed on `PATH` in this execution environment;
+    verification commands ran the already-installed `node_modules/.bin/`
+    binaries directly instead of `bun run test` / `bun run lint` / `bun
+    run build`. Same underlying tools and config, no changes to
+    `package.json` scripts or any lockfile.
+  - The `data-tsd-source` hydration-mismatch console warning noted above
+    is pre-existing and unrelated (confirmed via `git diff` against
+    `main`), but was not independently fixed or filed as its own issue
+    here, since `src/routes/__root.tsx` is out of scope for this story.
+- **Deliberately excluded scope (per approved plan):** category matching,
+  fuzzy search, advanced filters, saved search or persistence, backend
+  changes, new dependencies, general refactoring of `Connected()` or
+  `index.tsx`, and any unrelated UI changes.
+- **Stakeholder approval status:** Approved by Jacob on 2026-09-14, after
+  manually reviewing the feature's behavior live in the browser (dev
+  server, real SDK-connected session). Approval covers behavior only —
+  the change is still not staged, committed, or opened as a PR.
 
 ---
 
