@@ -514,6 +514,63 @@ code exists._
 
 ---
 
+### 2026-09-16 — Admin architecture direction approved (multi-user/organization model)
+
+- **What:** Approved the product direction for Action Dispatch's Admin
+  capability to evolve from a single-user, single-credential tool to a
+  multi-user organization application. Created `docs/ADMIN_ARCHITECTURE.md`
+  as the canonical source of truth for this direction, and updated the
+  conflicting single-user/no-persistence/no-auth wording in `CLAUDE.md`,
+  `USER_STORIES.md`, and
+  `.cursor/rules/core/{railguard-security,coding-standards,project-stack}.mdc`
+  to mark those statements as applying to the original, non-Admin product
+  and superseded for the Admin capability, each cross-referencing
+  `docs/ADMIN_ARCHITECTURE.md`.
+- **Key decisions recorded in `docs/ADMIN_ARCHITECTURE.md`:**
+  - MVP scope is **one Organization with multiple Users** — not full
+    multi-tenant/multi-org support.
+  - All users in that organization continue to operate against the
+    deployment's existing shared `ZAPIER_CREDENTIALS` /
+    `ZAPIER_CONNECTION_IDS` — unchanged from the current architecture; no
+    per-user or per-organization Zapier credential isolation in the MVP.
+  - Defined an **Organization / User / Membership** identity model, with
+    **Role** and **Status** as properties of a Membership (not of User
+    globally), so multi-organization support can be added later without
+    reworking the core model.
+  - MVP roles: **Admin** and **Operator**.
+  - Membership status lifecycle: **invited / active / deactivated**,
+    checked fresh on every request — deactivation must take effect on the
+    user's very next request, not their next login.
+  - Server-side request identity resolution (User + Organization +
+    Membership + Role + Status) is required at a single shared guard point
+    before any privileged operation runs; never trusted from
+    client-supplied data.
+  - MVP role→capability mapping is a fixed, code-defined table — no
+    admin-editable permission-scope UI yet.
+  - Authentication and persistence are now **approved requirements** for
+    the Admin capability, specified vendor-neutrally in
+    `docs/ADMIN_ARCHITECTURE.md` §10 — no vendor or specific technology
+    (auth provider, database, KV store, etc.) has been selected.
+  - Explicitly **deferred**: multi-organization support, per-organization
+    Zapier credentials, admin-editable/custom permission scopes,
+    per-user/per-role rate limits, SSO, audit logging, self-service org
+    creation/billing.
+  - Rate-limit storage is called out as a **separate future infrastructure
+    decision**, not assumed solved by whatever persistence is chosen for
+    identity data.
+- **Scope:** Documentation and planning only. **No application
+  functionality has been implemented** — no code in `src/` was touched, no
+  database or authentication mechanism exists yet, and none of the Admin
+  user stories has begun implementation.
+- **Files changed:** `docs/ADMIN_ARCHITECTURE.md` (new), `CLAUDE.md`,
+  `USER_STORIES.md`, `.cursor/rules/core/railguard-security.mdc`,
+  `.cursor/rules/core/coding-standards.mdc`,
+  `.cursor/rules/core/project-stack.mdc`.
+- **Branch:** `claude/action-dispatch-admin-planning-rgd36t`.
+- **Commit hashes:** None yet — nothing has been staged or committed.
+
+---
+
 ## Final Presentation Summary
 
 _To be written once at least one capability reaches "Stakeholder Approved"

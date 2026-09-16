@@ -22,12 +22,24 @@ commands or lockfiles into project tooling or docs.
   `next.config.js`, no `error.tsx`/`global-error.tsx` boundaries. Routes
   live under `src/routes/` via TanStack Router (file-based routing;
   `src/routeTree.gen.ts` is generated — never hand-edit it).
-- **No database.** No Prisma, no PostgreSQL, no Redis. No persistence
-  layer exists or is planned for the current phase.
-- **No NextAuth, no passwords, no new authentication system.** The only
-  credential model is the existing Zapier SDK authentication: CLI login
-  locally (`npx zapier-sdk login`), or `ZAPIER_CREDENTIALS` for CI/prod.
-  Never propose a login form, session store, or password hashing.
+- **No persistence layer for the original, non-Admin product.** No Prisma,
+  no PostgreSQL, no Redis — none needed for transcript analysis, review, or
+  execution. This assumption is **superseded for the Admin capability**: a
+  persistence layer for organization/user/role/session data is now planned
+  there. No specific technology has been selected — see
+  `docs/ADMIN_ARCHITECTURE.md` for the approved direction and requirements.
+  Don't add persistence outside that approved Admin scope without asking
+  first.
+- **No new authentication system for the original, non-Admin product.** The
+  Zapier SDK credential model (CLI login locally, or `ZAPIER_CREDENTIALS`
+  for CI/prod) remains the only credential governing which Zapier account
+  the app's actions run against — that is unchanged. This assumption is
+  **superseded for the Admin capability**: an application-level
+  user/organization authentication and session system is now planned there,
+  layered alongside (not replacing) the Zapier credential. No vendor or
+  approach has been selected — see `docs/ADMIN_ARCHITECTURE.md` for the
+  approved direction and requirements before implementing any login form,
+  session store, or credential handling.
 - **No Sentry, no Winston/Pino, no invented logging infrastructure.**
   Error visibility currently goes through Lovable's own utilities
   (`src/lib/error-capture.ts`, `src/lib/error-page.ts`,

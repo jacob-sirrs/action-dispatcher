@@ -35,13 +35,21 @@ When a request is underspecified, apply these project-correct defaults —
 - "file upload" → client-side only: validate extension and `file.size`
   **before** reading; never assume a server endpoint, cloud storage, or a
   database record exists to receive it (none does in this project).
-- "authentication" / "login" → there is no per-end-user login in this
-  project. The only credential is the existing Zapier SDK CLI
-  login/`ZAPIER_CREDENTIALS` model — never propose a new auth system,
-  session store, or password hashing.
-- "database" / "persist this" → there is no database. Don't add one;
-  don't propose Prisma, Postgres, or Redis. If something looks like it
-  needs persistence, flag it rather than inventing storage.
+- "authentication" / "login" → for the original, non-Admin product, there is
+  no per-end-user login — the only credential there is the Zapier SDK CLI
+  login/`ZAPIER_CREDENTIALS` model, unchanged. **Superseded for the Admin
+  capability:** an application-level end-user login (organization/user/
+  session) is now planned — see `docs/ADMIN_ARCHITECTURE.md` before
+  proposing or implementing anything here; don't invent a specific auth
+  system, session store, or hashing approach ahead of that approval, and
+  prefer a managed solution over hand-rolled session security when
+  implementation planning starts.
+- "database" / "persist this" → for the original, non-Admin product, there
+  is still no database — don't add one there. **Superseded for the Admin
+  capability:** persistence for organization/user/role/session data is now
+  planned — see `docs/ADMIN_ARCHITECTURE.md` for the requirements. No
+  technology is approved yet; flag the need rather than inventing storage or
+  picking a vendor unilaterally.
 - "log this" / "add logging" → never log transcript content, credentials,
   tokens, or personal information. Don't introduce a new logging library
   (Sentry, Winston, Pino) without being explicitly asked.

@@ -18,8 +18,12 @@ UI). If risks exist, state them concisely before generating code.
 ## Non-Negotiable Constraints
 
 - NEVER hardcode secrets, API keys, or tokens. The Zapier SDK credential
-  model (CLI login / `ZAPIER_CREDENTIALS`) is the only credential in this
-  project — never add a new one without being asked.
+  model (CLI login / `ZAPIER_CREDENTIALS`) remains the only credential
+  connecting this app to a Zapier account — never add a new *Zapier*
+  credential type without being asked. This is **superseded for the Admin
+  capability**: an application-level user/session credential is now planned
+  there, separate from the Zapier connection. Implement it only per
+  `docs/ADMIN_ARCHITECTURE.md`, never ad hoc.
 - NEVER import scripts from untrusted CDNs or external sources.
 - ALWAYS treat file content (e.g. an uploaded transcript) and any
   free-text input as untrusted: never execute it as code/markup, never
@@ -54,7 +58,11 @@ default I'm choosing?"
 
 ## Not applicable in this project
 
-Don't apply generic secure-coding defaults that assume infrastructure
-this project doesn't have: no SQL/database to parameterize, no password
-hashing (no passwords exist), no session/CSRF handling (no end-user login
-exists).
+Don't apply generic secure-coding defaults that assume infrastructure this
+project doesn't have: no SQL/database to parameterize, no password hashing
+(no passwords exist), no session/CSRF handling (no end-user login exists) —
+this exemption applies to the original, non-Admin product only. It is
+**superseded for the Admin capability**, which is planned to introduce
+end-user login, sessions, and persisted org/user data: standard
+session/CSRF handling and injection-safe data access apply there. See
+`docs/ADMIN_ARCHITECTURE.md` for the approved direction and requirements.

@@ -26,11 +26,17 @@ alwaysApply: true
   it's added.
 - **Linting/formatting:** ESLint (flat config, `eslint.config.js`) +
   Prettier
-- **Persistence:** **None.** No database, no Prisma, no PostgreSQL, no
-  Redis. No persistence layer exists or is currently planned.
-- **Auth:** No end-user login system. The single-operator Zapier SDK
-  credential (CLI login locally, or `ZAPIER_CREDENTIALS` for CI/prod) is
-  the only authentication model.
+- **Persistence:** **None for the original, non-Admin product.** No
+  database, no Prisma, no PostgreSQL, no Redis there. **Superseded for the
+  Admin capability:** a persistence layer for organization/user/role/session
+  data is now planned; no technology is approved yet — see
+  `docs/ADMIN_ARCHITECTURE.md`.
+- **Auth:** The Zapier SDK credential (CLI login locally, or
+  `ZAPIER_CREDENTIALS` for CI/prod) remains the only credential connecting
+  the app to a Zapier account — unchanged for the original, non-Admin
+  product. **Superseded for the Admin capability:** an application-level
+  end-user login/session system is now planned separately; no approach
+  selected yet — see `docs/ADMIN_ARCHITECTURE.md`.
 - **Error/observability tooling:** Lovable's own utilities
   (`src/lib/error-capture.ts`, `src/lib/error-page.ts`,
   `src/lib/lovable-error-reporting.ts`). No Sentry, no Winston/Pino.

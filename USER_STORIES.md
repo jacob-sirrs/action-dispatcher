@@ -4,7 +4,11 @@ Action Dispatcher turns a call/meeting transcript into a reviewable queue of
 actions across whatever apps a user has connected in Zapier — nothing about
 the app assumes a fixed roster of integrations. These stories describe the
 product from the perspective of a single user (a sales rep, founder, or
-support lead) operating against their own Zapier account.
+support lead) operating against their own Zapier account — as originally
+built. A multi-user/organization model is now planned separately for the
+Admin capability (see `docs/ADMIN_ARCHITECTURE.md`) without invalidating
+these stories, which remain the accurate spec for the non-Admin product
+surface.
 
 ## Connecting the Zapier SDK
 
@@ -133,8 +137,13 @@ support lead) operating against their own Zapier account.
 
 ## Out of scope (for now)
 
-- Multi-user support / per-user auth — this is a single-account tool by
-  design.
+- ~~Multi-user support / per-user auth — this is a single-account tool by
+  design.~~ **Superseded 2026-09-16:** multi-user/organization support (one
+  organization, multiple users for the MVP) is now an approved direction for
+  Action Dispatch's Admin capability. This document describes the
+  single-user product as originally built, and remains accurate for that
+  non-Admin surface. See `docs/ADMIN_ARCHITECTURE.md` for the multi-user/
+  Admin direction.
 - Editing or re-running a past batch of results after leaving the "executed"
   screen.
 - Persisting analysis history across sessions.
