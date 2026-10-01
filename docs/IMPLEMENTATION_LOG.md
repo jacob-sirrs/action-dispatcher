@@ -15,8 +15,11 @@ extension, oversized, empty, malformed `.vtt`), inline VTT speaker-label
 preservation, the rapid-reselection race behavior, and the DevTools
 network/console checks remain manually unverified — see the Increment 2
 entry below for exactly what's confirmed vs. still open.
-**User — 19 — App Search has reached Stakeholder Approved status; no other
-capability has reached "Tested" or "Stakeholder Approved" yet.**
+**User — 19 — App Search has reached Stakeholder Approved status. Session
+Action History (increment 1) and Persistent Action History POC (increment 2
+— localStorage-only, same-browser/device, explicitly not the final persisted
+admin audit log) have both reached Tested status. No other capability has
+reached "Tested" or "Stakeholder Approved" yet.**
 
 ---
 
@@ -34,6 +37,8 @@ Nothing qualifies yet — see Implementation Summary below._
 | F — Transcript file upload (Increment 1: validation & parsing) | In Progress | 2026-09-13 | `feature/transcript-file-upload` | — | Not yet requested |
 | F — Transcript file upload (Increment 2: upload UI & integration) | Implemented — core flow manually verified, some scenarios still unverified | 2026-09-13 | `feature/transcript-file-upload` | — | Not yet requested |
 | User — 19 — App Search (connected-app list search/filter) | Stakeholder Approved — automated tests pass, lint clean, build succeeds, manually verified live; no PR opened yet | 2026-09-14 | `feature/app-search` | — | Approved by Jacob — 2026-09-14 |
+| Session Action History (increment 1 — session-only activity log) | Tested — automated tests pass, lint clean, build succeeds, manually verified live against a real, SDK-connected session across two execution cycles; no PR opened yet | 2026-09-30 | `claude/session-action-history-183f97` | — | Not yet requested |
+| Persistent Action History (increment 2 — localStorage POC) | Tested — automated tests pass, lint clean, build succeeds, manually verified live (history survived a real browser refresh); same-browser/device only, explicitly a POC, not the final persisted admin audit log; no PR opened yet | 2026-09-30 | `claude/session-action-history-183f97` | — | Not yet requested |
 
 _No row in this table may say "Implemented," "Tested," or "Stakeholder
 Approved" until the corresponding Detailed Implementation Entry below
@@ -466,6 +471,350 @@ _Template for future entries — copy this structure exactly:_
   manually reviewing the feature's behavior live in the browser (dev
   server, real SDK-connected session). Approval covers behavior only —
   the change is still not staged, committed, or opened as a PR.
+
+---
+
+### Session Action History (increment 1 — session-only activity log)
+
+- **Date:** 2026-09-30
+- **Status:** Tested. Automated tests pass, lint is clean, the production
+  build succeeds, and the feature has now been manually verified live
+  against a real, SDK-connected session across two separate execution
+  cycles. Not yet staged, committed, or opened as a pull request, and not
+  yet given an explicit stakeholder approval sign-off (see "Stakeholder
+  approval status").
+- **User problem:** Tom's feedback asked for a way to see what happened
+  after an action executes. The long-term backlog item (referred to as
+  ADM-07 in the external backlog tool — not present anywhere in this repo)
+  wants a persisted, multi-user audit log, but that depends on identity and
+  persistence infrastructure that doesn't exist yet (see
+  `docs/ADMIN_ARCHITECTURE.md`). This increment is the smallest useful slice
+  buildable on the app's existing in-memory session state, explicitly not
+  that future persisted log.
+- **Why the change was selected:** Confirmed scope, agreed before
+  implementation: append-only, in-memory history of executed actions (app,
+  action, status, time, safe message), viewable this session only, clearly
+  labeled as distinct from the future ADM-07 audit log. A result-URL/deep-link
+  field was considered and explicitly dropped from scope after inspecting the
+  installed `@zapier/zapier-sdk` types — `apps.{appKey}.{actionType}.{actionKey}()`
+  resolves to `{ data: unknown[] }` with no documented or enforced per-app
+  output shape (confirmed via `ActionExecutionResultSchema` in the SDK's
+  `.d.ts`, and the SDK's own README labeling each item `ActionResultItem` in
+  prose only, not as a real exported type). Surfacing a link would have
+  required guessing field names (`url`/`link`/`permalink`) with no reliable
+  way to confirm the guessed value actually referred to the created item —
+  rejected as unsafe.
+- **What existed before:** `results: ExecutionResult[]` in `DispatchApp`
+  (`src/routes/index.tsx`) held only the most recent run's outcomes, replaced
+  on every `handleRun()` call and cleared by `resetToConnected()` — nothing
+  survived a second run or a return to the "connected" phase.
+- **What was actually changed:**
+  - Added a `HistoryEntry` type and `buildHistoryEntries(ranActions, results)`
+    — a pure function pairing each executed action with its result
+    (index-aligned, since `executeActions` returns one result per input
+    action in order) into a minimal, explicit-field entry — never
+    `sourceQuote`, `params`, or any raw execution-response data.
+  - Added `history: HistoryEntry[]` and `showHistory: boolean` state to
+    `DispatchApp`. `handleRun()` now appends
+    (`setHistory((prev) => [...prev, ...buildHistoryEntries(toRun, res)])`)
+    alongside the existing `setResults(res)` — the existing "executed" screen
+    (`Executed`, still showing only the latest run) is unchanged.
+    `resetToConnected()` and `handleAnalyze()` were not modified, so history
+    survives both by construction, not by an added guard.
+  - Added a "History" button to `TopBar` (shows a running count once
+    non-zero) that toggles `showHistory`; when true, `DispatchApp` renders a
+    new `ActionHistory` component instead of the phase-based view, with a
+    "← Back" control to return to whatever phase was active.
+  - Added `ActionHistory` component: an empty state ("No actions executed yet
+    this session."), a "This session only — not a persisted audit log" label,
+    and a list (newest first) of entries showing app, action type, account,
+    succeeded/failed status, the existing safe execution message, and a
+    localized timestamp.
+  - `DispatchApp` changed from module-private to a named export (same
+    rationale as `Connected` in a prior increment — testability).
+- **What the user can now do:** Click "History" at any point after connecting
+  to see every action executed so far in this browser tab's session, across
+  as many analyze/run cycles as they've done, including failures — without
+  losing that record by running again or navigating back to pick more apps.
+  Reloading the page clears it, by design.
+- **Acceptance criteria verified:**
+  - Every completed execution (success or failure) is appended, not
+    replacing prior entries — automated (`buildHistoryEntries` unit tests +
+    a full-flow `DispatchApp` integration test) **and manual** (executed one
+    real Slack "Send Channel Message" action, confirmed it appeared in
+    History, then executed a second real Slack action and confirmed both
+    remained).
+  - Each entry shows app, action, connected account, status, time, and the
+    existing safe execution message — automated (`ActionHistory` render
+    tests) **and manual** (confirmed all fields visible for the real Slack
+    execution: app, action, connected account, succeeded status, execution
+    message, timestamp).
+  - History accumulates across multiple execution cycles — automated
+    (integration test: two separate analyze→run cycles, both entries
+    present) **and manual** (two real analyze/execute cycles via "Analyze
+    Another Transcript," both executions confirmed present afterward).
+  - Starting a new analyze cycle or returning to Connected does not clear
+    history — automated (integration test asserts the history count is
+    unchanged immediately after "Analyze Another Transcript") **and manual**
+    (confirmed the first execution was not replaced or cleared after
+    returning from History, selecting "Analyze Another Transcript," and
+    completing a second real Slack execution).
+  - Newest execution appears first — manual (confirmed ordering with two
+    real executions).
+  - "This session only — not a persisted audit log" labeling is visible —
+    automated **and manual** (confirmed visible in the live session).
+  - No raw transcript content, credentials, tokens, arbitrary response data,
+    stack traces, or unnecessary resolved field values — automated
+    (`buildHistoryEntries` test asserts a crafted `sourceQuote`/param value
+    never appears in a built entry; by construction, `buildHistoryEntries`
+    only reads six named fields, and the raw Zapier execution response was
+    already discarded before this change and remains discarded). Not
+    re-verified manually field-by-field beyond what's listed above.
+  - Memory-only, resets on a full page reload — verified by construction
+    (plain `useState`, no storage APIs introduced). **Not manually tested
+    this pass** — the manual verification session did not include a page
+    reload, so reload-clears-history and any other cross-session or
+    persisted behavior remain unverified by direct observation, not just
+    unimplemented.
+  - Duplicate-execution guard behavior unmodified — no such guard exists yet
+    on this branch to preserve; confirmed no execution-trigger/disable logic
+    was touched beyond the one added `setHistory` call inside the
+    pre-existing `handleRun`.
+- **Automated tests and results:** 42/42 passing (`bun run test`, Vitest) —
+  31 pre-existing plus 11 new: 4 `buildHistoryEntries` unit tests, 5
+  `ActionHistory` render tests, 1 full `DispatchApp` integration test (mocks
+  `@/lib/zapier-dispatch`) covering accumulation across two execution cycles
+  and survival of a `resetToConnected` round-trip. `bun run lint`: 0 errors,
+  7 warnings (6 pre-existing in `src/components/ui/*.tsx`, unchanged; 1 new
+  — a `react-refresh/only-export-components` warning on `buildHistoryEntries`,
+  the same warning category already accepted elsewhere in this repo, e.g.
+  `button.tsx`'s `buttonVariants` — a non-component export needed for direct
+  unit testing). `bun run build` succeeds (client + SSR + Cloudflare worker
+  output).
+- **Manual tests and results:** Verified live on 2026-09-30 against a real,
+  SDK-connected session, using the dev server at `http://localhost:3333`
+  (via the existing `action-dispatch-dev` launch configuration). Confirmed:
+  - Executed a real Slack "Send Channel Message" action successfully.
+  - Opened Action History and confirmed the execution appeared with: app,
+    action, connected account, succeeded status, execution message, and
+    timestamp.
+  - Returned from History to the prior screen.
+  - Selected "Analyze Another Transcript," then analyzed and executed a
+    second, separate real Slack action successfully.
+  - Reopened Action History and confirmed both executions were present.
+  - Confirmed the newest execution appears first.
+  - Confirmed the first execution was not replaced or cleared by the second
+    analyze/execution cycle.
+  - Confirmed the "This session only — not a persisted audit log" labeling
+    is visible.
+
+  This pass did **not** include a page reload or any other test of
+  cross-session persistence — reload-clears-history is implemented (plain
+  `useState`) and covered only by that construction, not by direct manual
+  observation this pass. No claim is made that persistent or cross-session
+  history was tested, or that any such persistence was implemented — it was
+  not; this remains strictly session-only, in-memory state.
+- **Exact files changed:**
+  - `src/routes/index.tsx` (modified)
+  - `src/routes/index.test.tsx` (modified)
+- **Branch name:** `claude/session-action-history-183f97` (this worktree's
+  existing branch — no new branch created for this increment).
+- **Commit hashes:** None yet — nothing staged or committed.
+- **Pull-request URL:** None yet.
+- **Known limitations:**
+  - Reload-clears-history and any other cross-session/persistence behavior
+    have not been manually observed — only automated/construction-level
+    confidence exists for that specific claim.
+  - The result-URL/deep-link acceptance criterion from the original scope
+    proposal was dropped entirely per Jacob's decision — no heuristic URL
+    extraction exists anywhere in this change.
+  - History resets on a full page reload by design; there is no way to
+    recover a prior session's history once the tab is closed or reloaded.
+- **Deliberately excluded scope:** Any database, localStorage/sessionStorage,
+  authentication, multi-user identity, or persistence layer; the future
+  persisted ADM-07 audit log itself; any change to the duplicate-execution
+  guard (none exists on this branch); any change to `Executed`'s existing
+  latest-run summary; a result-URL/deep-link field.
+- **Stakeholder approval status:** Not yet requested — manual verification
+  is complete and recorded above, but no explicit approval sign-off has been
+  given yet.
+
+---
+
+### Persistent Action History (increment 2 — localStorage proof of concept)
+
+- **Date:** 2026-09-30
+- **Status:** Tested. Automated tests pass, lint is clean, the production
+  build succeeds, and the feature has been manually verified live in the
+  running application (history survived a real browser refresh). Not yet
+  staged, committed, or opened as a pull request, and not yet given an
+  explicit stakeholder approval sign-off (see "Stakeholder approval status").
+- **This is explicitly a proof of concept, not a finished persistence
+  design:** history now survives a page reload or browser restart, but only
+  on the **same browser and device**. It is **not** synced across browsers
+  or devices, involves no server-side storage, no database, no Cloudflare
+  KV/D1, no external storage, and no authentication or multi-user
+  attribution. It remains explicitly distinct from the future persisted,
+  multi-user ADM-07 audit log — this increment is a deliberately small,
+  reversible step, not that log.
+- **User problem:** Increment 1 (Session Action History) kept history only
+  in React state, so it was lost on every page reload — not useful across a
+  real working session where the operator might refresh the app, close the
+  tab, or come back later the same day on the same machine.
+- **Why the change was selected:** An architecture proposal comparing
+  database-backed persistence, Cloudflare-native storage (KV/D1), and
+  localStorage-only was presented before any implementation. localStorage
+  was chosen as the smallest safe next step because it requires no new
+  infrastructure, no secrets/credentials, no deployment change, and no
+  exception to `CLAUDE.md`'s "no persistence layer for the original,
+  non-Admin product" rule — unlike every server-side option, which would
+  have required provisioning real Cloudflare resources (explicitly out of
+  scope for this increment) and an explicit, written exception to that rule,
+  the same kind `docs/ADMIN_ARCHITECTURE.md` got for the Admin capability.
+  Cloudflare KV was identified as the natural next step if cross-device
+  persistence is ever wanted, but was not built here.
+- **What existed before:** `history` state in `DispatchApp`
+  (`src/routes/index.tsx`) was a plain, non-persisted `useState([])` —
+  Increment 1 explicitly and deliberately excluded
+  "localStorage/sessionStorage... or persistence layer" from its own scope
+  (see that entry's "Deliberately excluded scope"). This increment is that
+  explicitly-deferred work, now separately proposed and approved.
+- **What was actually changed:**
+  - Added `src/lib/history-storage.ts` — a small, framework-agnostic module
+    owning: `HISTORY_STORAGE_KEY`, `HISTORY_ENTRY_CAP` (200), a
+    Zod-validated schema wrapping the stored payload as
+    `{ schemaVersion: 1, entries: [...] }`, and `loadHistory()` /
+    `saveHistory()`. Both functions are defensive by construction — any read
+    or write failure (corrupt JSON, wrong shape, wrong/missing
+    `schemaVersion`, quota errors, storage unavailable) degrades silently to
+    an empty array / no-op, never throws, never partially trusts unvalidated
+    data.
+  - `DispatchApp`'s `history` state now hydrates from `loadHistory()` via a
+    `useEffect` that runs once after mount — **deliberately not** a lazy
+    `useState` initializer, because `localStorage` doesn't exist during
+    server-side rendering (this app renders via TanStack Start/SSR on
+    Cloudflare Workers) and reading it synchronously during render would
+    make the server's and the client's first render disagree, a React
+    hydration mismatch. Both the server and the client's very first render
+    now start from an empty array, and the effect fills in the real,
+    previously persisted value immediately after mount, client-only.
+  - `handleRun()` now computes the next history array once and both
+    `setHistory(nextHistory)`s it and `saveHistory(nextHistory)`s it, so
+    every newly executed action — success or failure — is persisted the
+    moment it's recorded, not just held in memory.
+  - Updated stale comments/JSDoc on `HistoryEntry`, the `history` state, and
+    `ActionHistory` that previously claimed history was "never persisted" /
+    "reset on a full page reload" — now accurately describe the
+    localStorage POC and its same-browser/device-only scope.
+  - Updated the visible History label from "This session only — not a
+    persisted audit log" to **"This browser only — not synced to other
+    devices, not a persisted audit log"** — so the UI never overstates (or
+    now understates) what's actually true.
+  - The persisted data shape is unchanged from Increment 1's `HistoryEntry`:
+    `id`, `appName`, `actionType`, `accountLabel`, `status`, `message`,
+    `ranAt`. No new field was added to what gets stored.
+- **What the user can now do:** Refresh the page, close and reopen the tab,
+  or restart the browser on the same machine, and still see every action
+  executed so far in Action History — without losing it the way Increment 1
+  did on any reload. Opening a different browser or device still shows no
+  history, by design.
+- **Acceptance criteria verified:**
+  - Same-browser/device-only persistence, no database/KV/D1/external
+    storage/auth/multi-user — automated (storage module is pure
+    `window.localStorage`, zero new dependencies) and by design/construction
+    (no server round-trip exists anywhere in this change).
+  - Existing safe `HistoryEntry` field set unchanged, nothing extra
+    persisted — automated (`history-storage.test.ts` asserts a stored entry
+    never contains `sourceQuote`/`params`, and that an injected unexpected
+    field — e.g. a simulated `secretToken` — is stripped on load rather than
+    trusted through).
+  - Capped at 200 entries, oldest dropped first — automated (`saveHistory`
+    test pushes 205 entries and asserts the oldest 5 are gone and exactly
+    200 remain, newest-first ordering intact).
+  - Persisted data validated before loading; corrupted or incompatible data
+    fails safe to empty history — automated (invalid JSON, wrong shape, a
+    bare array instead of the wrapper object, and a mismatched
+    `schemaVersion` all yield an empty array, none throw).
+  - UI wording accurately says history is stored only in this
+    browser/device — automated (`ActionHistory` test asserts the new "This
+    browser only" wording is present and the old "This session only"
+    wording is gone) and manual (confirmed visible in the live app).
+  - No change to Zapier execution behavior — `executeActions` and the SDK
+    call path were not touched; `handleRun` only gained two lines computing
+    and persisting the next history array around its existing calls.
+  - No transcripts, action inputs, credentials, tokens, or raw Zapier
+    responses persisted — unchanged from Increment 1's `buildHistoryEntries`
+    (still the only thing that constructs a `HistoryEntry`), which already
+    only reads six named, safe fields; persistence just serializes that same
+    already-safe shape.
+  - History survives a page reload — **automated** (two-instance mount/
+    unmount/remount test against the same `jsdom` `localStorage`, standing
+    in for a reload) **and manual**: history contained previously executed
+    actions, the application was refreshed in the live browser, and the
+    previous actions were still present in History afterward, confirming
+    same-browser localStorage persistence works end to end, not just in
+    tests.
+- **Automated tests and results:** **53/53 passing** (`bun run test`,
+  Vitest) — 42 pre-existing (including all of Increment 1's) plus 11 new: 9
+  unit tests in `src/lib/history-storage.test.ts` (empty-store read,
+  invalid-JSON read, wrong-shape read, bare-array-instead-of-wrapper read,
+  schema-version-mismatch read, successful round-trip, unexpected-field
+  stripped on load, cap-at-200-oldest-dropped-first on save, and
+  never-persists-fields-outside-the-safe-set on save) plus 2 integration
+  tests added to `src/routes/index.test.tsx` (previously persisted history
+  loads on mount before any execution; a freshly mounted instance —
+  standing in for a reload — still shows an entry persisted by a prior,
+  now-unmounted instance). `bun run lint`: **0 errors, 7 warnings** — the
+  identical set as before this change (6 pre-existing in
+  `src/components/ui/*.tsx`, 1 pre-existing on `buildHistoryEntries` in
+  `index.tsx`); the new `history-storage.ts` module introduced no new
+  warnings. `bun run build` **succeeds** — client, SSR, and Cloudflare
+  worker output all build cleanly, which specifically confirms the
+  `useEffect`-deferred load does not break server-side rendering.
+  `git diff --check`: **clean**.
+- **Manual tests and results:** Verified live in the running application:
+  History contained previously executed actions; the application was
+  refreshed; after the refresh, the previous actions were still present in
+  History. This confirms same-browser localStorage persistence works in the
+  live application, not just under test. (The dev server for this manual
+  pass ran on an alternate port, 3334, started directly via the Vite CLI
+  with an explicit `--port` flag — not through `.claude/launch.json`, which
+  remained unmodified — because the launch config's usual port, 3333, was
+  already occupied by a dev server from earlier in this same session;
+  neither process nor file was touched to resolve that.) Not covered by this
+  manual pass: a different browser or device (by design, expected to show no
+  history); clearing browser storage; the storage-quota-exceeded path.
+- **Exact files changed:**
+  - `src/lib/history-storage.ts` (new)
+  - `src/lib/history-storage.test.ts` (new)
+  - `src/routes/index.tsx` (modified)
+  - `src/routes/index.test.tsx` (modified)
+- **Branch name:** `claude/session-action-history-183f97` (this worktree's
+  existing branch — no new branch created for this increment).
+- **Commit hashes:** None yet — nothing staged or committed.
+- **Pull-request URL:** None yet.
+- **Known limitations:**
+  - Same-browser/device only — history does not sync across browsers,
+    devices, or users, by design for this POC.
+  - No handling surfaced to the operator for the storage-quota-exceeded
+    case — it fails silently (history simply stops persisting further
+    entries) rather than warning the user; not expected to matter at this
+    scale (200-entry cap, small per-entry payload) but not explicitly tested
+    against a real quota limit.
+  - Clearing browser data/storage for this origin will silently erase
+    history, with no warning or export path.
+  - This is not a foundation that directly becomes the ADM-07 audit log —
+    that will need real server-side storage and identity, not an upgrade of
+    this localStorage mechanism.
+- **Deliberately excluded scope:** Any database, Cloudflare KV/D1, external
+  storage, authentication, multi-user identity/attribution, cross-device
+  sync, the future persisted ADM-07 audit log itself, any change to Zapier
+  execution behavior or the duplicate-execution guard (none exists on this
+  branch), and any change to the persisted field set beyond what Increment 1
+  already established as safe.
+- **Stakeholder approval status:** Not yet requested — manual verification
+  is complete and recorded above, but no explicit approval sign-off has been
+  given yet.
 
 ---
 
