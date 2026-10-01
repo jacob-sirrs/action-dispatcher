@@ -15,8 +15,11 @@ extension, oversized, empty, malformed `.vtt`), inline VTT speaker-label
 preservation, the rapid-reselection race behavior, and the DevTools
 network/console checks remain manually unverified — see the Increment 2
 entry below for exactly what's confirmed vs. still open.
-**User — 19 — App Search has reached Stakeholder Approved status; no other
-capability has reached "Tested" or "Stakeholder Approved" yet.**
+**User — 19 — App Search has reached Stakeholder Approved status. The Slack
+"Send Channel Message" duplicate "Message Text" field bug fix has reached
+Tested status (manually verified live, including a successful Slack send) —
+not yet Stakeholder Approved. No other capability has reached "Tested" or
+"Stakeholder Approved" yet.**
 
 ---
 
@@ -34,6 +37,7 @@ Nothing qualifies yet — see Implementation Summary below._
 | F — Transcript file upload (Increment 1: validation & parsing) | In Progress | 2026-09-13 | `feature/transcript-file-upload` | — | Not yet requested |
 | F — Transcript file upload (Increment 2: upload UI & integration) | Implemented — core flow manually verified, some scenarios still unverified | 2026-09-13 | `feature/transcript-file-upload` | — | Not yet requested |
 | User — 19 — App Search (connected-app list search/filter) | Stakeholder Approved — automated tests pass, lint clean, build succeeds, manually verified live; no PR opened yet | 2026-09-14 | `feature/app-search` | — | Approved by Jacob — 2026-09-14 |
+| Bug Fix — Slack "Send Channel Message" duplicate "Message Text" field | Tested — automated tests pass, lint clean, build succeeds, manually verified live against a real, SDK-connected session that successfully sent a Slack message; no PR opened yet | 2026-10-01 | `claude/slack-message-duplicate-field-e627a4` | — | Not yet requested |
 
 _No row in this table may say "Implemented," "Tested," or "Stakeholder
 Approved" until the corresponding Detailed Implementation Entry below
@@ -466,6 +470,175 @@ _Template for future entries — copy this structure exactly:_
   manually reviewing the feature's behavior live in the browser (dev
   server, real SDK-connected session). Approval covers behavior only —
   the change is still not staged, committed, or opened as a PR.
+
+---
+
+### Bug Fix — Slack "Send Channel Message" duplicate "Message Text" field
+
+- **Date:** 2026-10-01
+- **Status:** Tested. Automated tests pass, lint is clean, the production
+  build succeeds, and the fix has been manually verified live against a
+  real, SDK-connected session — including actually executing the Slack
+  action and confirming Slack received the correct message. Not yet
+  reviewed/approved by the stakeholder.
+- **User problem:** Reported via live testing: the Slack "Send Channel
+  Message" action in the review queue rendered **two** fields both labeled
+  "MESSAGE TEXT." The first was pre-filled with the AI-generated message;
+  the second was a blank field the operator had to fill in by hand. Typing
+  into the second field and executing the action sent **only** that
+  manually-typed text to Slack — the AI-generated message in the first
+  field was silently never sent.
+- **Why the change was selected:** This is a correctness bug fix for the
+  existing, already-approved action-review/execution flow (transcript
+  analysis → review queue → execute) — not new scope, so no new acceptance
+  criterion applies. The bug was investigated end-to-end before any code
+  was touched (schema fetch → AI extraction → field construction → review
+  UI render → execution payload) to confirm the exact root cause before
+  changing anything, per this project's "find root cause before fixing"
+  practice.
+- **What existed before (root cause):** In
+  `extractActionsForApp` (`src/lib/action-dispatcher.ts`), each AI-proposed
+  parameter (`proposal.params`) carried a `key`/`label` the AI model
+  invented itself — **not** necessarily the real Zapier schema's field key
+  for that action. The code then built the rendered field list from
+  `new Set([...paramsByKey.keys(), ...requiredKeys])` — a plain **union**
+  of the AI's own invented keys and the schema's real required keys, with
+  no reconciliation between the two. Concretely, for Slack "Send Channel
+  Message": the AI proposed a param keyed `message` (its own guess) for the
+  message body, while Slack's real schema field is keyed `message_text`
+  (schema title "Message Text"). Both keys ended up in the union, so both
+  were rendered — one "ghost" field (`message`, carrying the AI's text,
+  not a real schema field) and one real field (`message_text`, schema-
+  required, rendered empty) — coincidentally sharing the same visible
+  label. At execution, `executeActions` sends every param key straight
+  through to Zapier (`Object.fromEntries(action.params.map(p => [p.key,
+  p.value]))`); Zapier only recognizes the real `message_text` key and
+  silently drops the unrecognized `message` key, so only whatever the
+  operator manually typed into the real (empty) field reached Slack.
+- **What was actually changed:** Added two new pure, exported functions in
+  `src/lib/action-dispatcher.ts` and rewired `extractActionsForApp` to use
+  them instead of the old union logic:
+  - `matchProposalParamsToSchema(schemaKeys, fieldLabels, proposalParams)`
+    — **Zapier schema keys are authoritative.** For each real schema key,
+    it looks for an AI-proposed param that targets it: an **exact key
+    match first**, falling back to a **normalized label/title match**
+    (case/whitespace-insensitive) when the AI's own key string doesn't
+    match the schema's key but its label does (e.g. `message` labeled
+    "Message Text" reconciles onto the real `message_text` key, also
+    titled "Message Text"). Each AI param is consumed by at most one
+    schema key. **Any AI param that matches neither a schema key nor a
+    schema label is dropped** — it can never surface as its own field or
+    reach execution.
+  - `buildActionParams({ schemaKeys, requiredKeys, fieldLabels,
+    dynamicKeys, matchedParams, choicesByKey })` — builds the final field
+    list from schema keys only, filtered to **fields the AI actually
+    matched, plus any required schema field** (even with no AI value, left
+    empty for the operator to complete) — never an AI-invented key, and
+    never an **optional** schema field the AI neither proposed nor
+    matched. Dynamic resource fields (Slack channel, Trello board, …)
+    still resolve their value against the account's real `choicesByKey`
+    options exactly as before this fix.
+
+  This was implemented in two TDD passes within this same work: the first
+  pass fixed the duplicate-field bug itself (schema-authoritative
+  reconciliation), which in turn exposed a second, narrower regression —
+  every optional schema field (bot identity, scheduling, link-unfurl
+  toggles, the Zap's own id, etc.) was being rendered unconditionally
+  alongside the two relevant fields. The second pass added the
+  matched-or-required filter in `buildActionParams` to resolve that.
+- **What the user can now do:** Review a Slack "Send Channel Message"
+  proposed action and see exactly the fields relevant to it — in the
+  verified case, only "Channel" (required) and "Message Text"
+  (required, pre-filled with the AI-generated message) — with no duplicate
+  "Message Text" field and no unrelated optional Slack fields (bot name,
+  bot icon, schedule-at, thread, zap id, etc.) cluttering the review
+  queue. Executing the action without touching "Message Text" now sends
+  the AI-generated message to Slack correctly.
+- **Acceptance criteria verified:** Not tied to a numbered acceptance
+  criterion (bug fix to existing, already-approved behavior, not new
+  scope). Verified instead against the investigation's own root-cause
+  findings and this fix's explicit goals:
+  - Schema keys remain authoritative — no field can appear under an
+    AI-invented key.
+  - Exact key match is tried before normalized label/title match.
+  - An AI param matching neither a schema key nor a schema label is
+    dropped, never reaching the rendered queue or execution.
+  - A required schema field with no matching AI value is still rendered,
+    empty, so the operator can complete it.
+  - An optional schema field the AI neither proposed nor matched is
+    excluded entirely.
+  - The Slack `message`/`message_text` case specifically resolves to
+    **one** "Message Text" field, under the real `message_text` key,
+    pre-filled with the AI-generated value.
+- **Automated tests and results:** 46/46 passing (`bun run test`, Vitest)
+  — 32 pre-existing (unchanged) plus 14 new tests in the new
+  `src/lib/action-dispatcher.test.ts`, covering: `matchProposalParamsToSchema`
+  (label-fallback reconciliation reproducing the exact Slack bug, exact-key
+  match taking priority over label match, a required field staying
+  unmatched when nothing targets it, an unrelated AI param matching
+  neither key nor label being dropped) and `buildActionParams` (exactly
+  one "Message Text" field produced — not two; a required unmatched field
+  rendered empty; an unmatched AI param never surfacing as its own field;
+  execution-input construction containing only real, reconciled schema
+  keys; dynamic-choice resolution for resource fields unchanged by the
+  fix; and a dedicated "optional field filtering" suite against a full
+  Slack-like schema fixture — including the exact optional field labels
+  from the live bug report (`as_bot`/"Send as a Bot?", `username`/"Bot
+  Name", `icon_url`/"Bot Icon", `unfurl_links`/"Auto-Expand Links?",
+  `link_names`/"Link Usernames and Channel Names?", `schedule_at`/"Schedule
+  At", `file`/"File", `thread_ts`/"Thread", `zap_id`/"Zap ID") — confirming
+  a matched optional field is included, a required unmatched field is
+  included empty, every one of those nine unmatched optional fields is
+  excluded, an unknown AI param is still dropped, and the
+  `message`→`message_text` reconciliation still yields a single field).
+  `bun run lint` reports 0 errors (6 pre-existing warnings in unrelated
+  `src/components/ui/*.tsx` files, unchanged by this work). `bun run
+  build` completes successfully. `git diff --check` reports no whitespace
+  errors.
+- **Manual tests and results:** Verified live in the browser (dev server
+  on port 3333, real SDK-connected session) against a real transcript
+  mentioning dropping a note in a shared Slack channel. Confirmed: the
+  Slack "Send Channel Message" proposed action displayed only two fields
+  — "Channel" and "Message Text" — with no duplicate "Message Text" field
+  and none of the unrelated optional Slack schema fields (Add Zapier App
+  to Channel Automatically?, Send as a Bot?, Bot Name, Bot Icon, Include a
+  Link to This Automation?, Attach Image by URL, Auto-Expand Links?, Link
+  Usernames and Channel Names?, Schedule At, File, Thread, Send Channel
+  Message?, Zap ID) rendered; "Message Text" was pre-filled with the
+  AI-generated value; the target Slack channel was selected; the action
+  was executed **without editing Message Text**; Slack received the
+  AI-generated message successfully.
+- **Exact files changed:**
+  - `src/lib/action-dispatcher.ts` (modified — added
+    `matchProposalParamsToSchema` and `buildActionParams`; exported
+    `FieldSchema` and `ProposalParam`; rewired `extractActionsForApp` to
+    use the new reconciliation functions in place of the old
+    `paramsByKey`/`allKeys` union)
+  - `src/lib/action-dispatcher.test.ts` (new)
+- **Branch name:** `claude/slack-message-duplicate-field-e627a4`
+- **Commit hashes:** None yet — nothing staged or committed.
+- **Pull-request URL:** None yet.
+- **Known limitations:**
+  - Label-fallback matching is a normalized (case/whitespace-insensitive)
+    exact string comparison, not fuzzy — an AI-generated label that
+    paraphrases the schema's title instead of matching it verbatim won't
+    reconcile, and the AI param is dropped rather than matched. Not
+    observed in testing, but a theoretical gap.
+  - If two schema fields legitimately share an identical title (not
+    observed in the Slack schema used here), only the first could consume
+    a given label-matched AI param, since each AI param is consumed at
+    most once, in schema key order.
+- **Deliberately excluded scope:** No change to what Zapier execution
+  sends beyond ensuring `inputs` only ever contains real, reconciled
+  schema keys — `executeActions` itself is untouched. No change to the
+  review UI's rendering code (`src/routes/index.tsx`) — it already
+  rendered whatever `params` array it was given correctly; the bug and
+  its fix are entirely in how that array is constructed. No
+  deduplication by visible label in the UI layer, per explicit
+  instruction — the fix only ever produces one entry per real schema key,
+  so no label-based dedup was ever needed.
+- **Stakeholder approval status:** Not yet requested — awaiting your
+  review before this moves to "Stakeholder Approved."
 
 ---
 
