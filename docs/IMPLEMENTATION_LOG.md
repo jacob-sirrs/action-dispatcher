@@ -20,9 +20,14 @@ Action History (increment 1) and Persistent Action History POC (increment 2
 — localStorage-only, same-browser/device, explicitly not the final persisted
 admin audit log) have both reached Tested status. The Slack "Send Channel
 Message" duplicate "Message Text" field bug fix has also reached Tested
-status (manually verified live, including a successful Slack send) — not
-yet Stakeholder Approved. No other capability has reached "Tested" or
-"Stakeholder Approved" yet.**
+status (manually verified live, including a successful Slack send). PH1-D →
+D2 (in-session duplicate/concurrent execution guard) has also reached Tested
+status — automated tests pass, lint/build/diff-check are clean, and Jacob
+personally performed live manual verification against the real,
+production-intended `#action-dispatch` Slack channel, including
+independently confirming in Slack that the test message appeared exactly
+once. None of the above has yet reached Stakeholder Approved beyond App
+Search.**
 
 ---
 
@@ -43,6 +48,7 @@ Nothing qualifies yet — see Implementation Summary below._
 | Session Action History (increment 1 — session-only activity log) | Tested — automated tests pass, lint clean, build succeeds, manually verified live against a real, SDK-connected session across two execution cycles; no PR opened yet | 2026-09-30 | `claude/session-action-history-183f97` | — | Not yet requested |
 | Persistent Action History (increment 2 — localStorage POC) | Tested — automated tests pass, lint clean, build succeeds, manually verified live (history survived a real browser refresh); same-browser/device only, explicitly a POC, not the final persisted admin audit log; no PR opened yet | 2026-09-30 | `claude/session-action-history-183f97` | — | Not yet requested |
 | Bug Fix — Slack "Send Channel Message" duplicate "Message Text" field | Tested — automated tests pass, lint clean, build succeeds, manually verified live against a real, SDK-connected session that successfully sent a Slack message; no PR opened yet | 2026-10-01 | `claude/slack-message-duplicate-field-e627a4` | — | Not yet requested |
+| PH1-D → D2 — In-session duplicate/concurrent execution guard | Tested — automated tests pass (4/4 focused, 71/71 full suite), lint/build/diff-check clean, manually verified live by Jacob against the real `#action-dispatch` Slack channel with independent Slack-side confirmation of exactly one message; staged, not committed | 2026-10-02 | `feature/duplicate-execution-guard` | — | Not yet requested |
 
 _No row in this table may say "Implemented," "Tested," or "Stakeholder
 Approved" until the corresponding Detailed Implementation Entry below
@@ -988,6 +994,175 @@ _Template for future entries — copy this structure exactly:_
   so no label-based dedup was ever needed.
 - **Stakeholder approval status:** Not yet requested — awaiting your
   review before this moves to "Stakeholder Approved."
+
+---
+
+### PH1-D → D2 — In-session duplicate/concurrent execution guard
+
+- **Date:** 2026-10-02
+- **Status:** Tested. Automated tests pass (4/4 focused, 71/71 full suite),
+  lint is clean, the production build succeeds, `git diff --check` is clean,
+  and the guard has been manually verified live by Jacob — including a
+  final pass against the real, production-intended `#action-dispatch`
+  Slack channel in the Simplify Elevation workspace, with Jacob
+  independently confirming directly in Slack that the test message
+  appeared exactly once. Staged (`src/routes/index.tsx`,
+  `src/routes/index.run-guard.test.tsx`), not committed.
+- **User problem:** During a demo, an action was executed twice because
+  nothing disabled the "Run" control while the first execution was still
+  in flight — a documented incident (`ACTION_DISPATCH_PHASE_PLAN.md` §2)
+  that D2 exists specifically to prevent.
+- **Why the change was selected:** Direct implementation of the approved
+  `PH1-D` → D2 acceptance criterion in
+  `FDO-action-dispatch/ACTION_DISPATCH_ACCEPTANCE_CRITERIA.md` (lines
+  557–611). D2 was originally sequenced for "the next reliability phase,
+  immediately after F"; Jacob explicitly chose to prioritize it ahead of
+  F's formal close-out on 2026-09-16.
+- **What existed before:** The single "Run N Queued Actions" button
+  (`src/routes/index.tsx`) had no in-flight state — `handleRun` called
+  `executeActions` with no guard, and the button's `disabled` condition
+  only checked `queuedCount === 0 || anyBlocked`. A second click during an
+  in-flight request could re-invoke `handleRun`, concurrently re-firing
+  every queued Zapier action.
+- **What was actually changed:**
+  - Added an `executingRef` (checked synchronously at the top of
+    `handleRun`, so the guard doesn't depend on a React re-render having
+    committed yet) plus mirrored `isExecuting` state, threaded into
+    `Review` as a new `executing` prop and added to the Run button's
+    `disabled` condition. `handleRun` wraps the `executeActions` call in
+    `try/catch/finally`, so the guard always resets — including on
+    failure — and the button can never get stuck disabled.
+  - `DispatchApp` was exported (previously module-private) solely so it
+    could be mounted directly in the new test file, matching the
+    precedent already set for `Connected` (App Search) and reused again by
+    the Persistent Action History work.
+  - **Merge history, for the record:** this work was originally built and
+    fully verified by automated test on a `feature/duplicate-execution-guard`
+    branch before `main` had the persistent-history or Slack-duplicate-field
+    changes. That work was never committed — an external branch switch (via
+    GitHub Desktop, outside this session) auto-stashed it intact before
+    `main` advanced by two unrelated, already-merged capabilities
+    (Persistent Action History POC and the Slack duplicate-field fix), both
+    of which also modified `handleRun` and the same render block. After
+    fast-forwarding to the updated `main`, the preserved stash was restored
+    and hand-merged conflict-by-conflict (4 hunks, all confined to
+    `DispatchApp`) — explicitly preserving both the history feature's
+    behavior *and* the guard's, rather than picking one side. The merge
+    nests the existing history build/save calls (`setHistory`,
+    `saveHistory`) **inside** the guard's `try` block, in the same relative
+    order `main` already used, so a second concurrent `handleRun` call
+    (if the guard ever failed) could not have double-written history
+    either. Both the original stash and the unrelated font-change stash
+    were preserved throughout and remain untouched.
+- **What the user can now do:** A rapid second click (or any repeated
+  trigger) on "Run N Queued Actions" while the first execution is still in
+  flight has no additional effect — only one Zapier call per action is ever
+  fired per click sequence, and exactly one Action History entry is
+  recorded per run, not one per click. If execution fails outright, the
+  control re-enables so the operator can try again, rather than staying
+  stuck.
+- **Acceptance criteria verified (D2):**
+  - *"A repeated click/trigger on the same action must not fire a second
+    Zapier call — the control should visibly disable or show 'running'
+    state... until the first result returns"* — **automated** (4 focused
+    tests: exactly one `executeActions` call despite two rapid triggers;
+    the button's native `disabled` state flips immediately; the guard
+    resets after a rejected call so the control isn't stuck; pre-existing
+    zero-queued/blocked disabled behavior unchanged) **and manual**,
+    twice: once against a disposable Slack sandbox workspace/channel, and
+    once as the final, authoritative pass against the real
+    `#action-dispatch` channel — in both passes, a real "Run" click
+    followed immediately by 4–5 rapid repeat clicks produced exactly one
+    `executeActionsFn` network request (confirmed via the browser's
+    network log), exactly one execution result in the UI, exactly one new
+    Action History entry, and — in the final pass — Jacob independently
+    confirmed in Slack itself that the message appeared exactly once.
+  - D2's second bullet (an already-executed identical action showing an
+    "already executed" state rather than allowing an unnoticed re-run) —
+    **not implemented.** Unchanged from the original scoping decision: the
+    current one-shot batch UI has no reachable path to attempt this —
+    once `executeActions` resolves, `phase` flips to `"executed"` and the
+    Run button/review queue are replaced entirely by the read-only results
+    list, so there is nothing left to re-click. Documented here again as a
+    carried-forward known limitation, not newly discovered.
+- **Automated tests and results:** 4/4 passing in
+  `src/routes/index.run-guard.test.tsx` (mounts the real `DispatchApp` via
+  a mocked `@/lib/zapier-dispatch` module, so the actual wired
+  `handleRun`/button are under test, not a stand-in). Full suite: **71/71
+  passing** across 6 test files (up from 36 pre-D2, reflecting the
+  Persistent Action History and Slack-duplicate-field test suites already
+  on `main`). The test file's `afterEach` was extended with
+  `localStorage.clear()` — the one adjustment needed for the now-merged
+  history feature, matching the same pattern `main`'s own
+  `index.test.tsx` already uses, since `DispatchApp` now hydrates history
+  from `localStorage` on mount. `node_modules/.bin/eslint .` reports 0
+  errors; the only warning inside files this change touches is a
+  pre-existing one on `buildHistoryEntries` (confirmed byte-identical to
+  `main`, not introduced here) — unchanged pre-existing warnings elsewhere
+  in the repo (`src/components/ui/*.tsx`) are likewise untouched.
+  `node_modules/.bin/vite build` completes successfully (exit code 0).
+  `git diff --check` is clean.
+- **Manual tests and results:** Two live passes against a real,
+  SDK-connected session (`jacob@simplifyelevation.com`), dev server via
+  the existing `action-dispatch-dev` launch configuration, reflecting the
+  fully merged working tree (persistent history + D2 guard together):
+  - **Rehearsal pass**, disposable Slack sandbox workspace/channel: Run
+    clicked once, then 4 additional rapid repeat clicks; exactly one
+    `executeActionsFn` request observed in the network log; UI showed
+    exactly one execution result; Action History count increased by
+    exactly one; no D2-related console errors (only the pre-existing,
+    unrelated `data-tsd-source` hydration-mismatch warnings already
+    documented against `src/routes/__root.tsx`, confirmed unchanged by
+    this work).
+  - **Final, authoritative pass**, the real production-intended
+    `#action-dispatch` channel (`C0C5NB3MTBM`) in the Simplify Elevation
+    workspace: a single queued Slack "Send Channel Message" action,
+    carrying a short, clearly-marked, disposable test string identifying
+    it as a D2 verification message (no transcript content, no real
+    business content). Run clicked once, then 4 additional rapid repeat
+    clicks landed before the UI transitioned to the "Executed" screen
+    (the 5th attempted click errored as "stale element" since the button
+    had already unmounted — itself consistent with only one execution
+    cycle completing). Confirmed: exactly one new `executeActionsFn`
+    request in the network log; exactly one execution result in the UI
+    ("Ran 1 action", "1 Succeeded"); the Action History count increased
+    by exactly one (2, up from 1 after the rehearsal pass); no
+    D2-related console errors; and Jacob independently confirmed directly
+    in Slack, outside this session's tooling, that exactly one copy of
+    the test message appeared in `#action-dispatch`.
+- **Exact files changed:**
+  - `src/routes/index.tsx` (modified — `isExecuting` state,
+    `executingRef`, `handleRun` guard wrapping with the existing history
+    build/save calls nested inside, `executing` prop threaded through
+    `Review`, Run button `disabled` condition extended, `DispatchApp`
+    export — all hand-merged against the newer `main` as described above)
+  - `src/routes/index.run-guard.test.tsx` (new)
+- **Branch name:** `feature/duplicate-execution-guard`
+- **Commit hashes:** None yet — staged, not committed.
+- **Pull-request URL:** None yet.
+- **Known limitations:**
+  - D2's second acceptance-criteria bullet (already-executed-action
+    visibility) remains unimplemented — no reachable UI path exists to
+    exercise it in the current one-shot batch model (see above).
+  - On execution failure, the error is caught and swallowed only to reset
+    the guard; it is not surfaced to the operator beyond the control
+    re-enabling — failure classification/display remains Capability C's
+    scope, not touched here.
+  - The guard's state (`isExecuting`/`executingRef`) is in-memory only,
+    like the rest of this app's UI state — it resets on a page reload,
+    consistent with everything else `DispatchApp` holds except the
+    now-persisted Action History.
+- **Deliberately excluded scope:** D1 (in-session duplicate *proposed*
+  actions), cross-session duplicate detection, true automation-loop
+  detection, an idempotency key sent to the execution call — none
+  touched, all remain future/out-of-scope per the acceptance criteria.
+  No change to the Persistent Action History feature's own behavior
+  beyond nesting its existing calls inside the new guard's `try` block in
+  the same order `main` already used.
+- **Stakeholder approval status:** Not yet requested — manual verification
+  is complete and recorded above, including your own independent
+  confirmation in Slack, but no explicit approval sign-off has been given
+  yet.
 
 ---
 

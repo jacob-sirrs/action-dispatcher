@@ -112,6 +112,11 @@ export function DispatchApp() {
   useEffect(() => {
     setHistory(loadHistory());
   }, []);
+  const [isExecuting, setIsExecuting] = useState(false);
+  // Synchronous guard checked at the top of handleRun — setIsExecuting alone
+  // isn't enough because two rapid clicks can both fire before React commits
+  // the state update that disables the button.
+  const executingRef = useRef(false);
 
   // On load, check whether the Zapier SDK is authenticated. If it is, load the
   // account's connections and go to the app; if not, show setup instructions.
@@ -219,14 +224,25 @@ export function DispatchApp() {
   }
 
   async function handleRun() {
+    if (executingRef.current) return;
     const toRun = actions.filter((a) => included[a.id]);
     if (toRun.length === 0) return;
-    const res = await executeActions(toRun);
-    setResults(res);
-    const nextHistory = [...history, ...buildHistoryEntries(toRun, res)];
-    setHistory(nextHistory);
-    saveHistory(nextHistory);
-    setPhase("executed");
+    executingRef.current = true;
+    setIsExecuting(true);
+    try {
+      const res = await executeActions(toRun);
+      setResults(res);
+      const nextHistory = [...history, ...buildHistoryEntries(toRun, res)];
+      setHistory(nextHistory);
+      saveHistory(nextHistory);
+      setPhase("executed");
+    } catch {
+      // Guard must reset so the operator can retry; surfacing the failure
+      // itself is Capability C's job, not this guard.
+    } finally {
+      executingRef.current = false;
+      setIsExecuting(false);
+    }
   }
 
   function resetToConnected() {
@@ -289,6 +305,7 @@ export function DispatchApp() {
                 activeActionId={activeActionId}
                 setActiveActionId={setActiveActionId}
                 onRun={handleRun}
+                executing={isExecuting}
                 onBack={resetToConnected}
               />
             )}
@@ -859,6 +876,7 @@ function Review({
   activeActionId,
   setActiveActionId,
   onRun,
+  executing,
   onBack,
 }: {
   transcript: string;
@@ -871,6 +889,7 @@ function Review({
   activeActionId: string | null;
   setActiveActionId: (id: string | null) => void;
   onRun: () => void;
+  executing: boolean;
   onBack: () => void;
 }) {
   const activeQuote = actions.find((a) => a.id === activeActionId)?.sourceQuote ?? null;
@@ -1063,7 +1082,7 @@ function Review({
             )}
             <button
               onClick={onRun}
-              disabled={queuedCount === 0 || anyBlocked}
+              disabled={queuedCount === 0 || anyBlocked || executing}
               className="inline-flex items-center gap-2 rounded-sm border border-border-strong bg-status-success px-4 py-2 text-sm font-medium text-status-success-foreground transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Run {queuedCount || ""} Queued Action{queuedCount === 1 ? "" : "s"}
