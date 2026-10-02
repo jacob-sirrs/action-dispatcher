@@ -458,10 +458,120 @@ function matchResourceChoice(guess: string, choices: ParamChoice[]): string | nu
   return phrase ? phrase.value : null;
 }
 
-type FieldSchema = {
+export type FieldSchema = {
   title?: string;
   "zapier:dynamicEnum"?: boolean;
 };
+
+/** One AI-proposed param, as returned by the per-app extraction prompt —
+ * `key`/`label` are the model's OWN free-text guesses, not necessarily the
+ * real Zapier schema field key (see `matchProposalParamsToSchema` below). */
+export type ProposalParam = { key: string; label: string; value: string };
+
+/** Case/whitespace-insensitive comparison for field labels/titles — used to
+ * reconcile an AI-proposed param onto the real schema key sharing its label
+ * when the AI's own key string doesn't match the schema's key. */
+function normalizeFieldLabel(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Reconciles the AI's freely-chosen param keys onto the REAL Zapier schema
+ * field keys. Schema keys are authoritative: this never invents a field that
+ * isn't in the schema. For each real schema key, it looks for an AI param
+ * that targets it — an exact key match first, falling back to a normalized
+ * label/title match — and consumes that AI param so it can't also match a
+ * second schema key. Any AI param that matches neither is left out of the
+ * returned map entirely (dropped).
+ *
+ * This is the fix for the Slack "Send Channel Message" duplicate-field bug:
+ * the AI proposed a param keyed "message" (its own guess) for the message
+ * body, while Slack's real schema field is keyed "message_text" — both
+ * labeled "Message Text". Without this reconciliation, both ended up
+ * rendered as separate fields, and only the real "message_text" key (empty,
+ * since the AI's value was attached to the ghost "message" key) was ever
+ * sent to Zapier.
+ */
+export function matchProposalParamsToSchema(
+  schemaKeys: string[],
+  fieldLabels: Record<string, string>,
+  proposalParams: ProposalParam[],
+): Map<string, ProposalParam> {
+  const consumed = new Set<number>();
+  const matched = new Map<string, ProposalParam>();
+
+  for (const schemaKey of schemaKeys) {
+    const exactIdx = proposalParams.findIndex((p, i) => !consumed.has(i) && p.key === schemaKey);
+    if (exactIdx !== -1) {
+      consumed.add(exactIdx);
+      matched.set(schemaKey, proposalParams[exactIdx]);
+      continue;
+    }
+
+    const normalizedLabel = normalizeFieldLabel(fieldLabels[schemaKey] ?? schemaKey);
+    const labelIdx = proposalParams.findIndex(
+      (p, i) => !consumed.has(i) && normalizeFieldLabel(p.label) === normalizedLabel,
+    );
+    if (labelIdx !== -1) {
+      consumed.add(labelIdx);
+      matched.set(schemaKey, proposalParams[labelIdx]);
+    }
+  }
+
+  return matched;
+}
+
+/**
+ * Builds the final ActionParam list for a proposed action: one entry per REAL
+ * schema key (never per AI-proposed key) that's either required or matched —
+ * `matchedParams` (from `matchProposalParamsToSchema`) supplies each schema
+ * key's reconciled AI value, if any. Schema keys are still authoritative (a
+ * field can never appear under an AI-invented key), but an optional field the
+ * AI neither proposed nor matched is left out entirely rather than rendered
+ * empty — for a POC review queue, a long tail of irrelevant optional fields
+ * (bot identity, scheduling, link-unfurl toggles, the Zap's own id, …) is
+ * noise, not something the operator needs to see or fill in. Dynamic
+ * resource fields (Slack channel, Trello board, …) still resolve their value
+ * against the account's real `choicesByKey` options, exactly as before this
+ * fix.
+ */
+export function buildActionParams(args: {
+  schemaKeys: string[];
+  requiredKeys: string[];
+  fieldLabels: Record<string, string>;
+  dynamicKeys: string[];
+  matchedParams: Map<string, ProposalParam>;
+  choicesByKey: Map<string, ParamChoice[]>;
+}): ActionParam[] {
+  const { schemaKeys, requiredKeys, fieldLabels, dynamicKeys, matchedParams, choicesByKey } = args;
+  const requiredSet = new Set(requiredKeys);
+  const dynamicSet = new Set(dynamicKeys);
+
+  return schemaKeys
+    .filter((key) => requiredSet.has(key) || matchedParams.has(key))
+    .map((key) => {
+      const claimed = matchedParams.get(key);
+      const label = claimed?.label ?? fieldLabels[key] ?? key;
+      const choices = choicesByKey.get(key);
+      if (dynamicSet.has(key) && choices) {
+        const resolved = claimed?.value ? matchResourceChoice(claimed.value, choices) : null;
+        return {
+          key,
+          label,
+          value: resolved ?? "",
+          required: requiredSet.has(key),
+          choices,
+          dynamic: true,
+        };
+      }
+      return {
+        key,
+        label,
+        value: claimed?.value ?? "",
+        required: requiredSet.has(key),
+      };
+    });
+}
 
 /** Fetches the real options for one dynamic field, capped so a huge dropdown
  * can't stall extraction. Returns [] on any error (field stays free-text). */
@@ -574,17 +684,23 @@ async function extractActionsForApp(
       continue;
     }
 
-    const paramsByKey = new Map(proposal.params.map((p) => [p.key, p]));
-    const allKeys = new Set([...paramsByKey.keys(), ...requiredKeys]);
+    // Schema property keys are authoritative — reconcile the AI's own
+    // free-text param keys onto them (exact key match, else normalized
+    // label/title match) rather than trusting the AI's keys as-is. An AI
+    // param that matches neither is dropped, so it can never surface as a
+    // duplicate "ghost" field alongside the real schema field (see
+    // matchProposalParamsToSchema's doc comment for the motivating bug).
+    const schemaKeys = Object.keys(fieldLabels);
+    const matchedParams = matchProposalParamsToSchema(schemaKeys, fieldLabels, proposal.params);
 
     // Resolve dynamic resource fields against the account's real options: fetch
     // the real {value,label} choices and map the AI's free-text target to a
     // real value. Only resolve dynamic fields the AI actually populated (or
     // required ones) to keep the number of choice lookups small.
-    const dynamicToResolve = [...allKeys].filter(
+    const dynamicToResolve = schemaKeys.filter(
       (key) =>
         dynamicKeys.includes(key) &&
-        (paramsByKey.get(key)?.value?.trim() || requiredKeys.includes(key)),
+        (matchedParams.get(key)?.value?.trim() || requiredKeys.includes(key)),
     );
     const choicesByKey = new Map<string, ParamChoice[]>();
     await Promise.all(
@@ -601,28 +717,13 @@ async function extractActionsForApp(
       }),
     );
 
-    const params: ActionParam[] = [...allKeys].map((key) => {
-      const claimed = paramsByKey.get(key);
-      const choices = choicesByKey.get(key);
-      if (choices) {
-        // Dynamic resource field: map the AI's target to a real option, or
-        // blank it and force the user to pick if there's no confident match.
-        const matched = claimed?.value ? matchResourceChoice(claimed.value, choices) : null;
-        return {
-          key,
-          label: claimed?.label ?? fieldLabels[key] ?? key,
-          value: matched ?? "",
-          required: requiredKeys.includes(key),
-          choices,
-          dynamic: true,
-        };
-      }
-      return {
-        key,
-        label: claimed?.label ?? fieldLabels[key] ?? key,
-        value: claimed?.value ?? "",
-        required: requiredKeys.includes(key),
-      };
+    const params = buildActionParams({
+      schemaKeys,
+      requiredKeys,
+      fieldLabels,
+      dynamicKeys,
+      matchedParams,
+      choicesByKey,
     });
 
     validated.push({
