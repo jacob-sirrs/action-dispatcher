@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TranscriptUpload } from "@/components/TranscriptUpload";
+import { loadHistory, saveHistory } from "@/lib/history-storage";
 import {
   analyzeTranscriptStream,
   executeActions,
@@ -40,7 +41,49 @@ export type AppProgress = {
   error?: string;
 };
 
-function DispatchApp() {
+/** One completed execution. Persisted to this browser's localStorage (see
+ * `src/lib/history-storage.ts`) as a POC, so it survives a reload or browser
+ * restart on this same browser/device only — not synced elsewhere, and
+ * deliberately carrying no transcript content, credentials, or raw
+ * execution-response data. This is NOT the future persisted, multi-user
+ * ADM-07 audit log. */
+export type HistoryEntry = {
+  id: string;
+  appName: string;
+  actionType: string;
+  accountLabel: string;
+  status: ExecutionResult["status"];
+  message: string;
+  ranAt: string;
+};
+
+/** Builds session-history entries by pairing each just-executed action with
+ * its result — `executeActions` returns one result per input action, in the
+ * same order, so this is a plain index zip, not a lookup. Deliberately picks
+ * only the fields the History view needs off `ProposedAction`/
+ * `ExecutionResult` — never `sourceQuote`, `params`, or anything else. */
+export function buildHistoryEntries(
+  ranActions: ProposedAction[],
+  results: ExecutionResult[],
+): HistoryEntry[] {
+  return results.flatMap((result, index) => {
+    const action = ranActions[index];
+    if (!action) return [];
+    return [
+      {
+        id: `${result.actionId}:${result.ranAt}`,
+        appName: action.appName,
+        actionType: action.actionType,
+        accountLabel: action.accountLabel,
+        status: result.status,
+        message: result.message,
+        ranAt: result.ranAt,
+      },
+    ];
+  });
+}
+
+export function DispatchApp() {
   const [phase, setPhase] = useState<Phase>("checking");
   const [sdkStatus, setSdkStatus] = useState<SdkStatus | null>(null);
   const [connections, setConnections] = useState<ConnectedApp[]>([]);
@@ -54,6 +97,21 @@ function DispatchApp() {
   const [analyzing, setAnalyzing] = useState(false);
   const [results, setResults] = useState<ExecutionResult[]>([]);
   const [activeActionId, setActiveActionId] = useState<string | null>(null);
+  // This browser's cumulative activity log — appended to on every run, never
+  // replaced, and never cleared by resetToConnected/handleAnalyze. Persisted
+  // to localStorage (see src/lib/history-storage.ts) as a POC, so it also
+  // survives a reload/restart on this same browser/device — it is NOT synced
+  // across devices and NOT the future persisted, multi-user ADM-07 audit log.
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+
+  // Hydrate persisted history after mount — client-only, since localStorage
+  // doesn't exist during SSR. Starting both the server and the first client
+  // render from an empty array avoids a hydration mismatch; this effect then
+  // immediately fills in the real, previously persisted value.
+  useEffect(() => {
+    setHistory(loadHistory());
+  }, []);
 
   // On load, check whether the Zapier SDK is authenticated. If it is, load the
   // account's connections and go to the app; if not, show setup instructions.
@@ -165,6 +223,9 @@ function DispatchApp() {
     if (toRun.length === 0) return;
     const res = await executeActions(toRun);
     setResults(res);
+    const nextHistory = [...history, ...buildHistoryEntries(toRun, res)];
+    setHistory(nextHistory);
+    saveHistory(nextHistory);
     setPhase("executed");
   }
 
@@ -179,50 +240,62 @@ function DispatchApp() {
 
   return (
     <div className="min-h-screen grid-bg">
-      <TopBar sdkStatus={sdkStatus} connectionCount={connections.length} phase={phase} />
+      <TopBar
+        sdkStatus={sdkStatus}
+        connectionCount={connections.length}
+        phase={phase}
+        historyCount={history.length}
+        onOpenHistory={() => setShowHistory(true)}
+      />
       <main className="mx-auto max-w-6xl px-6 pb-24 pt-10">
-        {(phase === "checking" || phase === "connecting") && (
-          <Connecting label="Loading your connected apps…" />
-        )}
-        {phase === "not_connected" && <NotConnected status={sdkStatus} />}
-        {phase === "connected" && (
-          <Connected
-            accounts={accounts}
-            transcript={transcript}
-            onTranscriptChange={setTranscript}
-            selectedByApp={selectedByApp}
-            onToggleApp={(appKey, defaultConnectionId) =>
-              setSelectedByApp((prev) => {
-                const next = { ...prev };
-                if (appKey in next) delete next[appKey];
-                else next[appKey] = defaultConnectionId;
-                return next;
-              })
-            }
-            onChooseAccount={(appKey, connectionId) =>
-              setSelectedByApp((prev) => ({ ...prev, [appKey]: connectionId }))
-            }
-            onClearAll={() => setSelectedByApp({})}
-            onAnalyze={handleAnalyze}
-          />
-        )}
-        {phase === "review" && (
-          <Review
-            transcript={transcript}
-            actions={actions}
-            setActions={setActions}
-            included={included}
-            setIncluded={setIncluded}
-            progress={progress}
-            analyzing={analyzing}
-            activeActionId={activeActionId}
-            setActiveActionId={setActiveActionId}
-            onRun={handleRun}
-            onBack={resetToConnected}
-          />
-        )}
-        {phase === "executed" && (
-          <Executed actions={actions} results={results} onReset={resetToConnected} />
+        {showHistory ? (
+          <ActionHistory entries={history} onBack={() => setShowHistory(false)} />
+        ) : (
+          <>
+            {(phase === "checking" || phase === "connecting") && (
+              <Connecting label="Loading your connected apps…" />
+            )}
+            {phase === "not_connected" && <NotConnected status={sdkStatus} />}
+            {phase === "connected" && (
+              <Connected
+                accounts={accounts}
+                transcript={transcript}
+                onTranscriptChange={setTranscript}
+                selectedByApp={selectedByApp}
+                onToggleApp={(appKey, defaultConnectionId) =>
+                  setSelectedByApp((prev) => {
+                    const next = { ...prev };
+                    if (appKey in next) delete next[appKey];
+                    else next[appKey] = defaultConnectionId;
+                    return next;
+                  })
+                }
+                onChooseAccount={(appKey, connectionId) =>
+                  setSelectedByApp((prev) => ({ ...prev, [appKey]: connectionId }))
+                }
+                onClearAll={() => setSelectedByApp({})}
+                onAnalyze={handleAnalyze}
+              />
+            )}
+            {phase === "review" && (
+              <Review
+                transcript={transcript}
+                actions={actions}
+                setActions={setActions}
+                included={included}
+                setIncluded={setIncluded}
+                progress={progress}
+                analyzing={analyzing}
+                activeActionId={activeActionId}
+                setActiveActionId={setActiveActionId}
+                onRun={handleRun}
+                onBack={resetToConnected}
+              />
+            )}
+            {phase === "executed" && (
+              <Executed actions={actions} results={results} onReset={resetToConnected} />
+            )}
+          </>
         )}
       </main>
     </div>
@@ -235,10 +308,14 @@ function TopBar({
   sdkStatus,
   connectionCount,
   phase,
+  historyCount,
+  onOpenHistory,
 }: {
   sdkStatus: SdkStatus | null;
   connectionCount: number;
   phase: Phase;
+  historyCount: number;
+  onOpenHistory: () => void;
 }) {
   return (
     <header className="border-b border-border bg-surface/60 backdrop-blur">
@@ -254,7 +331,16 @@ function TopBar({
             </span>
           </div>
         </div>
-        <SdkStatusPill sdkStatus={sdkStatus} connectionCount={connectionCount} phase={phase} />
+        <div className="flex items-center gap-4">
+          <button
+            type="button"
+            onClick={onOpenHistory}
+            className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground hover:text-foreground"
+          >
+            History{historyCount > 0 ? ` · ${historyCount}` : ""}
+          </button>
+          <SdkStatusPill sdkStatus={sdkStatus} connectionCount={connectionCount} phase={phase} />
+        </div>
       </div>
     </header>
   );
@@ -1060,6 +1146,90 @@ function TranscriptView({
           );
         })}
       </pre>
+    </div>
+  );
+}
+
+/* ─────────────────────── Session Action History ─────────────────────── */
+
+/** Every action executed on this browser/device, success or failure —
+ * persisted to this browser's localStorage as a POC (see `history` state in
+ * DispatchApp and `src/lib/history-storage.ts`), so it survives a reload or
+ * restart here, but is never synced to another browser or device. Still
+ * deliberately distinct from the future persisted, multi-user ADM-07 audit
+ * log: there is no server-side storage, no multi-user attribution, and only
+ * the fields already safe to display (app, action, status, time, and the
+ * same user-safe message the "executed" screen already shows) — never raw
+ * transcript content, credentials, tokens, or unresolved response data. */
+export function ActionHistory({
+  entries,
+  onBack,
+}: {
+  entries: HistoryEntry[];
+  onBack: () => void;
+}) {
+  const ordered = [...entries].reverse();
+  return (
+    <div>
+      <div className="flex items-end justify-between">
+        <SectionLabel step="Activity" title="Action History" />
+        <button
+          onClick={onBack}
+          className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground hover:text-foreground"
+        >
+          ← Back
+        </button>
+      </div>
+      <p className="mt-1 font-mono text-[10px] uppercase tracking-widest text-status-review">
+        This browser only — not synced to other devices, not a persisted audit log
+      </p>
+      {ordered.length === 0 ? (
+        <div className="mt-4 rounded-md border border-dashed border-border bg-card px-4 py-6 text-center text-sm text-muted-foreground">
+          No actions executed yet this session.
+        </div>
+      ) : (
+        <ol className="mt-4 divide-y divide-border overflow-hidden rounded-md border border-border bg-card">
+          {ordered.map((entry) => {
+            const ok = entry.status === "succeeded";
+            return (
+              <li key={entry.id} className="flex items-start gap-3 px-4 py-3">
+                <span
+                  className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
+                    ok
+                      ? "bg-status-success shadow-[0_0_10px_var(--status-success)]"
+                      : "bg-status-fail shadow-[0_0_10px_var(--status-fail)]"
+                  }`}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                      {entry.appName} · {entry.actionType}
+                    </span>
+                    <span
+                      className={`ml-auto rounded-sm px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider ${
+                        ok
+                          ? "bg-status-success-bg text-status-success"
+                          : "bg-status-fail-bg text-status-fail"
+                      }`}
+                    >
+                      {ok ? "Succeeded" : "Failed"}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
+                    ran as {entry.accountLabel}
+                  </div>
+                  <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+                    {entry.message}
+                  </div>
+                  <div className="mt-1 font-mono text-[10px] text-muted-foreground">
+                    {new Date(entry.ranAt).toLocaleString()}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
     </div>
   );
 }
